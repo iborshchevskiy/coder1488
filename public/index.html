@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Crypto Accounting System – track portfolios, compute tax gains, import from wallets" />
+  <title>Crypto Accounting</title>
+  <link rel="stylesheet" href="/static/css/main.css" />
+  <!-- Chart.js via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+
+<!-- ============================================================
+     SIDEBAR
+     ============================================================ -->
+<nav id="sidebar" aria-label="Main navigation">
+  <div class="sidebar-logo">
+    <div class="logo-icon" aria-hidden="true">₿</div>
+    <span>Crypto Accounting</span>
+  </div>
+
+  <div class="sidebar-nav">
+    <div class="nav-section-label">Overview</div>
+    <button class="nav-item active" data-page="dashboard">
+      <span class="nav-icon">📊</span> Dashboard
+    </button>
+    <button class="nav-item" data-page="portfolio">
+      <span class="nav-icon">💼</span> Portfolio
+    </button>
+
+    <div class="nav-section-label">Activity</div>
+    <button class="nav-item" data-page="transactions">
+      <span class="nav-icon">📋</span> Transactions
+    </button>
+    <button class="nav-item" data-page="import">
+      <span class="nav-icon">⬆️</span> Import
+    </button>
+
+    <div class="nav-section-label">Reports</div>
+    <button class="nav-item" data-page="gains">
+      <span class="nav-icon">📈</span> Capital Gains
+    </button>
+    <button class="nav-item" data-page="income">
+      <span class="nav-icon">💰</span> Income
+    </button>
+
+    <div class="nav-section-label">Fiat</div>
+    <button class="nav-item" data-page="fiat">
+      <span class="nav-icon">🏦</span> Fiat Accounts
+    </button>
+
+    <div class="nav-section-label">Utilities</div>
+    <button class="nav-item" data-page="exchange">
+      <span class="nav-icon">💱</span> Exchange Rates
+    </button>
+    <button class="nav-item" data-page="settings">
+      <span class="nav-icon">⚙️</span> Settings
+    </button>
+  </div>
+
+  <div class="sidebar-footer">
+    Crypto Accounting v2.0
+  </div>
+</nav>
+
+<!-- ============================================================
+     MAIN
+     ============================================================ -->
+<div id="main">
+  <!-- Topbar -->
+  <header id="topbar" role="banner">
+    <span id="breadcrumb" class="breadcrumb">Dashboard</span>
+    <div class="spacer"></div>
+    <span class="base-currency-badge" id="topbar-currency">USD</span>
+  </header>
+
+  <!-- Pages -->
+  <main id="content" role="main">
+
+    <!-- ======================== DASHBOARD ======================== -->
+    <section class="page active" id="page-dashboard">
+      <div class="kpi-grid section-gap">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Cost Basis</div>
+          <div class="kpi-value" id="kpi-basis">—</div>
+          <div class="kpi-sub">across all holdings</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Market Value</div>
+          <div class="kpi-value" id="kpi-mv">—</div>
+          <div class="kpi-sub">at current prices</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Unrealised P&amp;L</div>
+          <div class="kpi-value" id="kpi-pnl">—</div>
+          <div class="kpi-sub">open positions</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Realised Gain/Loss</div>
+          <div class="kpi-value" id="kpi-gain-loss">—</div>
+          <div class="kpi-sub">all years</div>
+        </div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Fiat Balance</div>
+          <div class="kpi-value" id="kpi-fiat-balance">—</div>
+          <div class="kpi-sub" id="kpi-fiat-sub">across all accounts</div>
+        </div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Transactions</div>
+          <div class="kpi-value" id="kpi-txns">—</div>
+          <div class="kpi-sub">total recorded</div>
+        </div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Assets</div>
+          <div class="kpi-value" id="kpi-assets">—</div>
+          <div class="kpi-sub">unique coins</div>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1.6fr; gap:1rem;">
+        <!-- Allocation chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Allocation</span>
+          </div>
+          <div class="card-body">
+            <div class="chart-wrap">
+              <canvas id="allocation-chart" aria-label="Portfolio allocation pie chart" role="img"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top holdings table -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Top Holdings</span>
+            <button class="btn btn-secondary btn-sm" onclick="navigate('portfolio')">View All</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th class="text-right">Qty</th>
+                  <th class="text-right">Avg Cost</th>
+                  <th class="text-right">Mkt Value</th>
+                  <th class="text-right">Unreal. P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody id="top-holdings-body">
+                <tr><td colspan="5" class="empty-state"><span class="spinner"></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== PORTFOLIO ======================== -->
+    <section class="page" id="page-portfolio">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Current Holdings</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadPortfolio()">↻ Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Avg Cost</th>
+                <th class="text-right">Cost Basis</th>
+                <th class="text-right">Mkt Value</th>
+                <th class="text-right">Unreal. P&amp;L</th>
+                <th class="text-right">P&amp;L %</th>
+              </tr>
+            </thead>
+            <tbody id="portfolio-body">
+              <tr><td colspan="7" class="empty-state"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== TRANSACTIONS ======================== -->
+    <section class="page" id="page-transactions">
+      <!-- Toolbar -->
+      <div style="display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem; align-items:flex-end;">
+        <div class="field">
+          <label for="tx-filter-asset">Asset</label>
+          <input id="tx-filter-asset" type="text" placeholder="BTC" style="width:90px" />
+        </div>
+        <div class="field">
+          <label for="tx-filter-type">Type</label>
+          <select id="tx-filter-type" style="width:160px">
+            <option value="">All types</option>
+            <optgroup label="Crypto ↔ Fiat">
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </optgroup>
+            <optgroup label="Fiat Cash">
+              <option value="fiat_deposit">Fiat Deposit</option>
+              <option value="fiat_withdrawal">Fiat Withdrawal</option>
+            </optgroup>
+            <optgroup label="Crypto">
+              <option value="receive">Receive</option>
+              <option value="send">Send</option>
+              <option value="swap">Swap</option>
+              <option value="mining">Mining</option>
+              <option value="income">Income</option>
+              <option value="transfer_in">Transfer In</option>
+              <option value="transfer_out">Transfer Out</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="field">
+          <label for="tx-filter-wallet">Wallet</label>
+          <input id="tx-filter-wallet" type="text" placeholder="Coinbase" style="width:120px" />
+        </div>
+        <div class="field">
+          <label for="tx-filter-year">Year</label>
+          <input id="tx-filter-year" type="number" placeholder="2024" style="width:90px" min="2009" max="2100" />
+        </div>
+        <div style="flex:1"></div>
+        <span id="tx-count" style="font-size:.85rem;color:var(--clr-text-muted);align-self:flex-end"></span>
+        <button class="btn btn-primary" id="btn-add-txn">+ Add Transaction</button>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Asset</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Total USD</th>
+                <th class="text-right">Fee USD</th>
+                <th>Wallet</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="tx-body">
+              <tr><td colspan="8" class="empty-state"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Pagination -->
+      <div style="display:flex; align-items:center; gap:.75rem; margin-top:.75rem; justify-content:flex-end;">
+        <button class="btn btn-secondary btn-sm" id="tx-prev">← Prev</button>
+        <span id="tx-page-info" style="font-size:.85rem;color:var(--clr-text-muted)"></span>
+        <button class="btn btn-secondary btn-sm" id="tx-next">Next →</button>
+      </div>
+    </section>
+
+    <!-- ======================== CAPITAL GAINS ======================== -->
+    <section class="page" id="page-gains">
+      <!-- Filters -->
+      <div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
+        <div class="field">
+          <label for="gains-year">Tax Year</label>
+          <input id="gains-year" type="number" placeholder="All years" style="width:110px" min="2009" max="2100" />
+        </div>
+        <div class="field">
+          <label for="gains-method">Method</label>
+          <select id="gains-method" style="width:100px">
+            <option value="">Default</option>
+            <option value="fifo">FIFO</option>
+            <option value="lifo">LIFO</option>
+            <option value="hifo">HIFO</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" id="gains-filter-btn">Apply</button>
+      </div>
+
+      <!-- KPI row -->
+      <div class="kpi-grid section-gap" style="grid-template-columns: repeat(3, 1fr);">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Gain / Loss</div>
+          <div class="kpi-value" id="gains-total">—</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Long-Term</div>
+          <div class="kpi-value" id="gains-lt">—</div>
+          <div class="kpi-sub">held &gt; 365 days</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Short-Term</div>
+          <div class="kpi-value" id="gains-st">—</div>
+          <div class="kpi-sub">held ≤ 365 days</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Asset</th>
+                <th class="text-right">Qty Disposed</th>
+                <th class="text-right">Proceeds</th>
+                <th class="text-right">Cost Basis</th>
+                <th class="text-right">Fees</th>
+                <th class="text-right">Gain / Loss</th>
+                <th>Term</th>
+              </tr>
+            </thead>
+            <tbody id="gains-body">
+              <tr><td colspan="8" class="empty-state"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== INCOME ======================== -->
+    <section class="page" id="page-income">
+      <div style="display:flex; gap:.75rem; flex-wrap:wrap; align-items:flex-end; margin-bottom:1rem;">
+        <div class="field">
+          <label for="income-year">Year</label>
+          <input id="income-year" type="number" placeholder="All years" style="width:110px" min="2009" max="2100" />
+        </div>
+        <button class="btn btn-primary" id="income-filter-btn">Apply</button>
+        <div style="flex:1"></div>
+        <div class="kpi-card" style="padding:.5rem 1rem; min-width:0;">
+          <div class="kpi-label">Total Income (USD)</div>
+          <div class="kpi-value" id="income-total" style="font-size:1.2rem">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Asset</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Value (USD)</th>
+              </tr>
+            </thead>
+            <tbody id="income-body">
+              <tr><td colspan="5" class="empty-state"><span class="spinner"></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== IMPORT ======================== -->
+    <section class="page" id="page-import">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="tab-auto">Auto-Detect</button>
+        <button class="tab-btn" data-tab="tab-coinbase">Coinbase</button>
+        <button class="tab-btn" data-tab="tab-binance">Binance</button>
+        <button class="tab-btn" data-tab="tab-kraken">Kraken</button>
+        <button class="tab-btn" data-tab="tab-cryptodom">Crypto.com</button>
+        <button class="tab-btn" data-tab="tab-tron">Tron / TRC20</button>
+        <button class="tab-btn" data-tab="tab-eth">Ethereum</button>
+        <button class="tab-btn" data-tab="tab-btc">Bitcoin</button>
+      </div>
+
+      <!-- Auto-detect CSV -->
+      <div class="tab-panel active" id="tab-auto">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Auto-Detect Exchange CSV</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+              Upload a CSV export from Coinbase, Binance, Kraken, or Crypto.com — the format is detected automatically.
+            </p>
+            <div class="upload-zone" id="zone-auto">
+              <div class="upload-icon">📄</div>
+              <strong>Drop CSV here or click to browse</strong>
+              <p class="upload-filename" style="margin-top:.5rem;font-size:.8rem;color:var(--clr-accent)"></p>
+              <input type="file" id="file-auto" accept=".csv" style="display:none" />
+            </div>
+            <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" data-import="file-auto"
+                onclick="submitImport('/import/csv', 'file-auto')">Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Coinbase -->
+      <div class="tab-panel" id="tab-coinbase">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Coinbase CSV</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+              Export from Coinbase → <em>Reports → Generate Report → Transaction history CSV</em>.
+            </p>
+            <div class="upload-zone" id="zone-coinbase">
+              <div class="upload-icon">🔶</div>
+              <strong>Coinbase CSV export</strong>
+              <p class="upload-filename" style="margin-top:.5rem;font-size:.8rem;color:var(--clr-accent)"></p>
+              <input type="file" id="file-coinbase" accept=".csv" style="display:none" />
+            </div>
+            <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" data-import="file-coinbase"
+                onclick="submitImport('/import/coinbase', 'file-coinbase')">Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Binance -->
+      <div class="tab-panel" id="tab-binance">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Binance CSV</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+              Export from Binance → <em>Orders → Trade History → Export</em>.
+            </p>
+            <div class="upload-zone" id="zone-binance">
+              <div class="upload-icon">🟡</div>
+              <strong>Binance Trade History CSV</strong>
+              <p class="upload-filename" style="margin-top:.5rem;font-size:.8rem;color:var(--clr-accent)"></p>
+              <input type="file" id="file-binance" accept=".csv" style="display:none" />
+            </div>
+            <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" data-import="file-binance"
+                onclick="submitImport('/import/binance', 'file-binance')">Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kraken -->
+      <div class="tab-panel" id="tab-kraken">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Kraken CSV</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+              Export from Kraken → <em>History → Export Ledger</em>.
+            </p>
+            <div class="upload-zone" id="zone-kraken">
+              <div class="upload-icon">🦑</div>
+              <strong>Kraken Ledger CSV</strong>
+              <p class="upload-filename" style="margin-top:.5rem;font-size:.8rem;color:var(--clr-accent)"></p>
+              <input type="file" id="file-kraken" accept=".csv" style="display:none" />
+            </div>
+            <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" data-import="file-kraken"
+                onclick="submitImport('/import/kraken', 'file-kraken')">Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Crypto.com -->
+      <div class="tab-panel" id="tab-cryptodom">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Crypto.com CSV</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+              Export from Crypto.com App → <em>Accounts → Export Transaction History</em>.
+            </p>
+            <div class="upload-zone" id="zone-cryptodom">
+              <div class="upload-icon">🔵</div>
+              <strong>Crypto.com Transaction CSV</strong>
+              <p class="upload-filename" style="margin-top:.5rem;font-size:.8rem;color:var(--clr-accent)"></p>
+              <input type="file" id="file-cryptodom" accept=".csv" style="display:none" />
+            </div>
+            <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" data-import="file-cryptodom"
+                onclick="submitImport('/import/crypto-com', 'file-cryptodom')">Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tron / TRC20 -->
+      <div class="tab-panel" id="tab-tron">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Tron Address (TRC20)</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1.25rem;color:var(--clr-text-muted);font-size:.9rem">
+              Enter a public Tron wallet address. Transactions are fetched from <strong>Tronscan</strong> API (free).
+              Especially useful for <strong>USDT TRC20</strong>.
+            </p>
+            <div class="form-grid">
+              <div class="field" style="grid-column: 1/-1">
+                <label for="bc-tron-address">Tron Address</label>
+                <input id="bc-tron-address" type="text" placeholder="TXyz... (starts with T, ~34 chars)" />
+              </div>
+              <div class="field">
+                <label for="bc-tron-tokens">Filter Tokens (optional)</label>
+                <input id="bc-tron-tokens" type="text" placeholder="USDT, USDC  (comma-separated)" />
+              </div>
+              <div class="field" style="justify-content:flex-end; flex-direction:row; align-items:center; gap:.5rem;">
+                <input type="checkbox" id="bc-tron-trx" checked style="width:auto" />
+                <label for="bc-tron-trx" style="margin:0;">Include native TRX</label>
+              </div>
+            </div>
+            <div style="margin-top:1.25rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" id="bc-tron-btn"
+                onclick="submitBlockchainImport('tron')">Fetch &amp; Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ethereum -->
+      <div class="tab-panel" id="tab-eth">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Ethereum Address</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1.25rem;color:var(--clr-text-muted);font-size:.9rem">
+              Fetches ETH and ERC20 transactions via <strong>Etherscan API</strong>.
+              A free API key from <a href="https://etherscan.io/register" target="_blank" rel="noopener">etherscan.io</a> increases rate limits.
+            </p>
+            <div class="form-grid">
+              <div class="field" style="grid-column:1/-1">
+                <label for="bc-eth-address">Ethereum Address</label>
+                <input id="bc-eth-address" type="text" placeholder="0x... (42 chars)" />
+              </div>
+              <div class="field">
+                <label for="bc-eth-tokens">Filter ERC20 Tokens (optional)</label>
+                <input id="bc-eth-tokens" type="text" placeholder="USDT, USDC, LINK" />
+              </div>
+              <div class="field">
+                <label for="bc-eth-key">Etherscan API Key (optional)</label>
+                <input id="bc-eth-key" type="text" placeholder="YourApiKeyToken" />
+              </div>
+            </div>
+            <div style="margin-top:1.25rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" id="bc-eth-btn"
+                onclick="submitBlockchainImport('eth')">Fetch &amp; Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bitcoin -->
+      <div class="tab-panel" id="tab-btc">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Import from Bitcoin Address</span></div>
+          <div class="card-body">
+            <p style="margin-bottom:1.25rem;color:var(--clr-text-muted);font-size:.9rem">
+              Fetches confirmed Bitcoin transactions via <strong>Blockstream.info</strong> (free, no key required).
+            </p>
+            <div class="field">
+              <label for="bc-btc-address">Bitcoin Address</label>
+              <input id="bc-btc-address" type="text" placeholder="bc1q... / 1... / 3..." />
+            </div>
+            <div style="margin-top:1.25rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" id="bc-btc-btn"
+                onclick="submitBlockchainImport('btc')">Fetch &amp; Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== EXCHANGE RATES ======================== -->
+    <section class="page" id="page-exchange">
+      <div class="card section-gap">
+        <div class="card-header">
+          <div>
+            <span class="card-title">Live Exchange Rates</span>
+            <span style="font-size:.8rem;color:var(--clr-text-muted);margin-left:.75rem">
+              Base: <strong id="fx-base">USD</strong> &bull; Updated: <span id="fx-updated">—</span>
+            </span>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="loadExchangeRates()">↻ Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="fx-grid" id="fx-grid">
+            <span class="spinner"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual rate override -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Set Manual Rate Override</span></div>
+        <div class="card-body">
+          <p style="margin-bottom:1rem;color:var(--clr-text-muted);font-size:.9rem">
+            Override a specific exchange rate. Useful when live data is unavailable or stale.
+          </p>
+          <form id="form-manual-rate" style="display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap;">
+            <div class="field">
+              <label for="manual-from">From</label>
+              <input id="manual-from" type="text" placeholder="USD" style="width:80px" maxlength="5" />
+            </div>
+            <div class="field">
+              <label for="manual-to">To</label>
+              <input id="manual-to" type="text" placeholder="EUR" style="width:80px" maxlength="5" />
+            </div>
+            <div class="field">
+              <label for="manual-rate">Rate</label>
+              <input id="manual-rate" type="number" placeholder="0.920000" step="any" style="width:140px" />
+            </div>
+            <button class="btn btn-primary" type="submit">Save Rate</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== SETTINGS ======================== -->
+    <section class="page" id="page-settings">
+      <div class="card" style="max-width:640px;">
+        <div class="card-header"><span class="card-title">System Settings</span></div>
+        <div class="card-body">
+          <form id="form-settings">
+            <div class="form-grid" style="margin-bottom:1.25rem;">
+              <div class="field">
+                <label for="cfg-base-currency">Base Currency</label>
+                <select id="cfg-base-currency">
+                  <option value="USD">USD – US Dollar</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="cfg-method">Cost Basis Method</label>
+                <select id="cfg-method">
+                  <option value="fifo">FIFO – First In, First Out</option>
+                  <option value="lifo">LIFO – Last In, First Out</option>
+                  <option value="hifo">HIFO – Highest Cost First</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="cfg-tax-month">Tax Year Start Month</label>
+                <select id="cfg-tax-month">
+                  <option value="1">January (US / EU)</option>
+                  <option value="4">April (UK)</option>
+                  <option value="7">July</option>
+                </select>
+              </div>
+              <div class="field" style="flex-direction:row; align-items:center; gap:.5rem; margin-top:1.2rem;">
+                <input type="checkbox" id="cfg-fees-in-basis" style="width:auto" />
+                <label for="cfg-fees-in-basis" style="margin:0; font-size:.875rem; color:var(--clr-text);">
+                  Include fees in cost basis
+                </label>
+              </div>
+            </div>
+
+            <hr style="border:none; border-top:1px solid var(--clr-border); margin-bottom:1.25rem;" />
+
+            <div style="font-weight:600; margin-bottom:.75rem; font-size:.9rem;">FX Rate Provider</div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="cfg-rate-provider">Provider</label>
+                <select id="cfg-rate-provider">
+                  <option value="ecb">ECB (European Central Bank) – free</option>
+                  <option value="exchangerate-api">ExchangeRate-API – requires key</option>
+                  <option value="manual">Manual only</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="cfg-rate-api-key">API Key (if required)</label>
+                <input id="cfg-rate-api-key" type="text" placeholder="Your API key" autocomplete="off" />
+              </div>
+            </div>
+
+            <div style="margin-top:1.5rem; display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" type="submit">Save Settings</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================== FIAT ACCOUNTS ======================== -->
+    <section class="page" id="page-fiat">
+      <!-- Summary cards -->
+      <div id="fiat-accounts-grid" class="kpi-grid section-gap">
+        <div class="kpi-card"><div class="kpi-label">Loading…</div></div>
+      </div>
+
+      <!-- Per-currency detail -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Fiat Account Detail</span>
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <select id="fiat-currency-select" style="font-size:.875rem;padding:.3rem .6rem;border-radius:var(--radius);border:1px solid var(--clr-border);">
+              <option value="">Select currency…</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="loadFiatLedger()">View Ledger</button>
+          </div>
+        </div>
+
+        <!-- Stats row -->
+        <div id="fiat-detail-stats" style="display:none; padding:1rem 1.25rem; border-bottom:1px solid var(--clr-border);">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;">
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Current Balance</div>
+              <div id="fiat-stat-balance" style="font-size:1.3rem;font-weight:700;margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Total Deposited</div>
+              <div id="fiat-stat-deposited" style="font-size:1.1rem;font-weight:600;color:var(--clr-green);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Total Withdrawn</div>
+              <div id="fiat-stat-withdrawn" style="font-size:1.1rem;font-weight:600;color:var(--clr-text-muted);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Spent on Buys</div>
+              <div id="fiat-stat-spent" style="font-size:1.1rem;font-weight:600;color:var(--clr-red);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Received from Sells</div>
+              <div id="fiat-stat-received" style="font-size:1.1rem;font-weight:600;color:var(--clr-green);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Fiat P&amp;L (Sells − Buys)</div>
+              <div id="fiat-stat-pnl" style="font-size:1.1rem;font-weight:600;margin-top:.2rem">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledger table -->
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Asset</th>
+                <th class="text-right">Crypto Qty</th>
+                <th class="text-right">Fiat Amount</th>
+                <th class="text-right">USD Equiv.</th>
+                <th class="text-right">Running Balance</th>
+                <th>Wallet</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="fiat-ledger-body">
+              <tr><td colspan="9" class="empty-state">Select a currency above to view its ledger.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============================================================
+     ADD TRANSACTION MODAL
+     ============================================================ -->
+<div class="modal-backdrop hidden" id="modal-add-txn" role="dialog" aria-modal="true" aria-labelledby="modal-add-txn-title">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-add-txn-title">Add Transaction</span>
+      <button class="btn btn-ghost btn-sm" id="btn-close-add-txn" aria-label="Close">✕</button>
+    </div>
+    <form id="form-add-txn">
+      <div class="modal-body">
+        <div class="form-grid">
+          <div class="field">
+            <label for="txn-type">Type *</label>
+            <select id="txn-type" name="type" required onchange="onTxnTypeChange(this.value)">
+              <optgroup label="Crypto ↔ Fiat">
+                <option value="buy">Buy (fiat → crypto)</option>
+                <option value="sell">Sell (crypto → fiat)</option>
+              </optgroup>
+              <optgroup label="Fiat Cash">
+                <option value="fiat_deposit">Fiat Deposit</option>
+                <option value="fiat_withdrawal">Fiat Withdrawal</option>
+              </optgroup>
+              <optgroup label="Crypto">
+                <option value="receive">Receive (gift / airdrop)</option>
+                <option value="send">Send (gift / donation)</option>
+                <option value="swap">Swap (crypto ↔ crypto)</option>
+                <option value="mining">Mining / Staking</option>
+                <option value="income">Income</option>
+                <option value="transfer_in">Transfer In</option>
+                <option value="transfer_out">Transfer Out</option>
+              </optgroup>
+            </select>
+          </div>
+          <div class="field">
+            <label for="txn-date">Date *</label>
+            <input id="txn-date" name="date" type="date" required />
+          </div>
+          <div class="field">
+            <label for="txn-asset">Asset *</label>
+            <input id="txn-asset" name="asset" type="text" placeholder="BTC" required style="text-transform:uppercase" />
+          </div>
+          <div class="field">
+            <label for="txn-quantity">Quantity *</label>
+            <input id="txn-quantity" name="quantity" type="number" step="any" placeholder="0.5" required min="0" />
+          </div>
+          <div class="field">
+            <label for="txn-price">Price per Unit (USD)</label>
+            <input id="txn-price" name="price_usd" type="number" step="any" placeholder="65000" min="0" />
+          </div>
+          <div class="field">
+            <label for="txn-total">Total Value (USD)</label>
+            <input id="txn-total" name="total_usd" type="number" step="any" placeholder="32500" min="0" />
+          </div>
+          <div class="field">
+            <label for="txn-fee">Fee (USD)</label>
+            <input id="txn-fee" name="fee_usd" type="number" step="any" placeholder="2.50" min="0" />
+          </div>
+
+          <!-- Fiat section — shown for buy / sell / fiat_deposit / fiat_withdrawal -->
+          <div id="fiat-fields" style="display:contents">
+            <div class="field" style="grid-column:1/-1">
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-accent);padding:.4rem 0 .2rem;border-top:1px solid var(--clr-border);margin-top:.25rem;">
+                Fiat Side
+              </div>
+            </div>
+            <div class="field">
+              <label for="txn-fiat-currency">Fiat Currency</label>
+              <select id="txn-fiat-currency" name="fiat_currency">
+                <option value="">— none —</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+                <option value="CAD">CAD</option>
+                <option value="AUD">AUD</option>
+                <option value="CHF">CHF</option>
+                <option value="CNY">CNY</option>
+                <option value="SEK">SEK</option>
+                <option value="NOK">NOK</option>
+                <option value="DKK">DKK</option>
+                <option value="SGD">SGD</option>
+                <option value="HKD">HKD</option>
+                <option value="KRW">KRW</option>
+                <option value="BRL">BRL</option>
+                <option value="INR">INR</option>
+                <option value="PLN">PLN</option>
+                <option value="ZAR">ZAR</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="txn-fiat-amount">
+                Fiat Amount
+                <span id="txn-fiat-amount-hint" style="font-weight:400;color:var(--clr-text-muted);">(spent on buy / received from sell)</span>
+              </label>
+              <input id="txn-fiat-amount" name="fiat_amount" type="number" step="any" placeholder="23000" min="0" />
+            </div>
+            <div class="field">
+              <label for="txn-fx-rate">
+                FX Rate to USD
+                <span style="font-weight:400;color:var(--clr-text-muted);">(1 fiat = ? USD)</span>
+              </label>
+              <input id="txn-fx-rate" name="fx_rate_to_usd" type="number" step="any" placeholder="1.09 for EUR" min="0" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="txn-wallet">Wallet / Exchange</label>
+            <input id="txn-wallet" name="wallet" type="text" placeholder="Coinbase" />
+          </div>
+          <div class="field" style="grid-column:1/-1">
+            <label for="txn-notes">Notes</label>
+            <input id="txn-notes" name="notes" type="text" placeholder="Optional notes" />
+          </div>
+          <div class="field">
+            <label for="txn-tx-hash">Tx Hash</label>
+            <input id="txn-tx-hash" name="tx_hash" type="text" placeholder="0x..." />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-add-txn">Cancel</button>
+        <button type="submit" class="btn btn-primary">Add Transaction</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+</body>
+</html>

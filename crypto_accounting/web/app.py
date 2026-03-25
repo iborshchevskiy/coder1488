@@ -49,6 +49,7 @@ from ..engine.blockchain_importer import BlockchainImporter
 from ..engine.fiat_account import FiatAccountTracker
 from ..models.transaction import Transaction, TransactionType
 from ..config import FIAT_SYMBOLS
+from ..storage import get_storage, FileStorage
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +58,6 @@ log = logging.getLogger(__name__)
 # ------------------------------------------------------------------ #
 
 _DATA_DIR = Path.home() / ".crypto_accounting"
-_CONFIG_PATH = _DATA_DIR / "config.json"
-_LEDGER_PATH = _DATA_DIR / "ledger.csv"
 
 _state: Dict[str, Any] = {}
 
@@ -72,30 +71,18 @@ def _get_store() -> TransactionStore:
 
 
 def _save_store() -> None:
-    store = _get_store()
-    ledger_path = Path(_get_config().ledger_path)
-    if not ledger_path.is_absolute():
-        ledger_path = _DATA_DIR / ledger_path
-    store.save_csv(ledger_path)
-
-
-def _reload_store() -> None:
-    config = _get_config()
-    ledger_path = Path(config.ledger_path)
-    if not ledger_path.is_absolute():
-        ledger_path = _DATA_DIR / ledger_path
-    if ledger_path.exists():
-        _state["store"] = TransactionStore.load_csv(ledger_path)
-    else:
-        _state["store"] = TransactionStore()
+    _state["storage"].save_store(_get_store())
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _state["config"] = Config.load(_CONFIG_PATH)
-    _reload_store()
-    _state["converter"] = FiatConverter(_get_config(), _DATA_DIR)
+    storage = get_storage(_DATA_DIR)
+    _state["storage"] = storage
+    _state["config"] = storage.load_config()
+    _state["store"] = storage.load_store()
+    cache_dir = _DATA_DIR if isinstance(storage, FileStorage) else Path("/tmp/crypto_fx_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _state["converter"] = FiatConverter(_get_config(), cache_dir)
     yield
 
 
@@ -149,9 +136,10 @@ def create_app() -> FastAPI:
         new_cfg = Config.from_dict(data)
         if new_cfg.base_currency not in SUPPORTED_FIAT:
             raise HTTPException(400, f"Unsupported currency: {new_cfg.base_currency}")
-        new_cfg.save(_CONFIG_PATH)
+        _state["storage"].save_config(new_cfg)
         _state["config"] = new_cfg
-        _state["converter"] = FiatConverter(new_cfg, _DATA_DIR)
+        cache_dir = _DATA_DIR if isinstance(_state["storage"], FileStorage) else Path("/tmp/crypto_fx_cache")
+        _state["converter"] = FiatConverter(new_cfg, cache_dir)
         return {"ok": True, "config": new_cfg.to_dict()}
 
     # ---------------------------------------------------------------- #
@@ -183,7 +171,7 @@ def create_app() -> FastAPI:
         cfg = _get_config()
         converter.set_manual_rate(body.from_currency, body.to_currency, body.rate)
         cfg.manual_rates[f"{body.from_currency.upper()}{body.to_currency.upper()}"] = body.rate
-        cfg.save(_CONFIG_PATH)
+        _state["storage"].save_config(cfg)
         return {"ok": True}
 
     # ---------------------------------------------------------------- #
@@ -404,10 +392,11 @@ def create_app() -> FastAPI:
     # ---------------------------------------------------------------- #
 
     async def _save_upload(file: UploadFile) -> Path:
-        tmp = _DATA_DIR / "uploads" / file.filename
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_bytes(await file.read())
-        return tmp
+        import tempfile
+        suffix = Path(file.filename).suffix if file.filename else ".csv"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(await file.read())
+            return Path(f.name)
 
     def _merge_import(txns: List[Transaction]) -> dict:
         store = _get_store()
