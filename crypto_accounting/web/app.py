@@ -24,6 +24,14 @@ POST /api/import/blockchain/btc         – import from Bitcoin address
 GET  /api/gains                         – realised capital gains
 GET  /api/income                        – income transactions
 GET  /api/summary                       – aggregate stats (year filter optional)
+POST /api/telegram/webhook              – Telegram bot webhook receiver
+GET  /api/telegram/config               – get Telegram bot config (admin)
+PUT  /api/telegram/config               – update Telegram bot config (admin)
+POST /api/telegram/setwebhook           – register webhook URL with Telegram
+GET  /api/telegram/users                – list registered Telegram users (admin)
+DELETE /api/telegram/users/{chat_id}    – remove a user (admin)
+GET  /api/telegram/subscriptions        – list all wallet subscriptions (admin)
+POST /api/telegram/notify/test          – send a test notification (admin)
 """
 
 from __future__ import annotations
@@ -50,6 +58,10 @@ from ..engine.fiat_account import FiatAccountTracker
 from ..models.transaction import Transaction, TransactionType
 from ..config import FIAT_SYMBOLS
 from ..storage import get_storage, FileStorage
+from ..telegram.bot import TelegramBot
+from ..telegram.tg_store import TelegramStore, TelegramConfig
+from ..telegram.handlers import BotHandlers
+from ..telegram.notifications import NotificationDispatcher
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +86,14 @@ def _save_store() -> None:
     _state["storage"].save_store(_get_store())
 
 
+def _get_tg_store() -> TelegramStore:
+    return _state["tg_store"]
+
+
+def _get_dispatcher() -> Optional[NotificationDispatcher]:
+    return _state.get("dispatcher")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     storage = get_storage(_DATA_DIR)
@@ -83,6 +103,18 @@ async def _lifespan(app: FastAPI):
     cache_dir = _DATA_DIR if isinstance(storage, FileStorage) else Path("/tmp/crypto_fx_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
     _state["converter"] = FiatConverter(_get_config(), cache_dir)
+
+    # Telegram
+    tg_store = TelegramStore.auto(_DATA_DIR if isinstance(storage, FileStorage) else None)
+    _state["tg_store"] = tg_store
+    tg_cfg = tg_store.config
+    if tg_cfg.token:
+        bot = TelegramBot(tg_cfg.token)
+        _state["bot"] = bot
+        _state["dispatcher"] = NotificationDispatcher(bot, tg_store)
+    else:
+        _state["bot"] = None
+        _state["dispatcher"] = None
     yield
 
 
@@ -403,6 +435,7 @@ def create_app() -> FastAPI:
         existing_hashes = {t.tx_hash for t in store.all() if t.tx_hash}
         new_count = 0
         dup_count = 0
+        new_txns: List[Transaction] = []
         for t in txns:
             if t.tx_hash and t.tx_hash in existing_hashes:
                 dup_count += 1
@@ -410,8 +443,21 @@ def create_app() -> FastAPI:
             store.add(t)
             if t.tx_hash:
                 existing_hashes.add(t.tx_hash)
+            new_txns.append(t)
             new_count += 1
         _save_store()
+        # Fire Telegram notifications for new transactions
+        dispatcher = _get_dispatcher()
+        if dispatcher and new_txns:
+            try:
+                dispatcher.notify_transactions(new_txns)
+                tg_cfg = _get_tg_store().config
+                if tg_cfg.admin_chat_ids:
+                    dispatcher.notify_import_summary(
+                        tg_cfg.admin_chat_ids, new_txns, new_count, dup_count
+                    )
+            except Exception:
+                log.exception("Telegram notification error")
         return {"imported": new_count, "duplicates_skipped": dup_count}
 
     @app.post("/api/import/csv")
@@ -543,6 +589,142 @@ def create_app() -> FastAPI:
             "gains": {k: str(v) if isinstance(v, Decimal) else v for k, v in gains_summary.items()},
             "base_currency": cfg.base_currency,
         }
+
+    # ---------------------------------------------------------------- #
+    # Telegram – Webhook receiver
+    # ---------------------------------------------------------------- #
+
+    class _WebhookSecret:
+        """Header dependency for Telegram webhook secret validation."""
+        pass
+
+    from fastapi import Request, Header
+
+    @app.post("/api/telegram/webhook", include_in_schema=False)
+    async def telegram_webhook(
+        request: Request,
+        x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+    ):
+        tg_store = _get_tg_store()
+        cfg = tg_store.config
+        # Validate secret token if configured
+        if cfg.webhook_secret and x_telegram_bot_api_secret_token != cfg.webhook_secret:
+            raise HTTPException(403, "Invalid secret token")
+        bot = _state.get("bot")
+        if not bot:
+            raise HTTPException(503, "Telegram bot not configured")
+        try:
+            update = await request.json()
+            handlers = BotHandlers(bot, tg_store)
+            handlers.handle_update(update)
+        except Exception:
+            log.exception("Webhook handler error")
+        return {"ok": True}
+
+    # ---------------------------------------------------------------- #
+    # Telegram – Admin config API
+    # ---------------------------------------------------------------- #
+
+    class TelegramConfigBody(BaseModel):
+        token: Optional[str] = None
+        admin_chat_ids: Optional[List[int]] = None
+        notifications_enabled: Optional[bool] = None
+        webhook_secret: Optional[str] = None
+
+    @app.get("/api/telegram/config")
+    async def get_telegram_config():
+        cfg = _get_tg_store().config
+        d = cfg.to_dict()
+        # Mask the token — only expose whether it's set
+        d["token_set"] = bool(d.get("token"))
+        d["token"] = "***" if d.get("token") else ""
+        bot = _state.get("bot")
+        d["bot_connected"] = False
+        if bot:
+            info = bot.get_me()
+            d["bot_connected"] = info.get("ok", False)
+            if info.get("ok"):
+                d["bot_username"] = info["result"].get("username", "")
+        return d
+
+    @app.put("/api/telegram/config")
+    async def update_telegram_config(body: TelegramConfigBody):
+        tg_store = _get_tg_store()
+        cfg = tg_store.config
+        if body.token is not None and body.token not in ("", "***"):
+            cfg.token = body.token
+        if body.admin_chat_ids is not None:
+            cfg.admin_chat_ids = body.admin_chat_ids
+        if body.notifications_enabled is not None:
+            cfg.notifications_enabled = body.notifications_enabled
+        if body.webhook_secret is not None:
+            cfg.webhook_secret = body.webhook_secret
+        tg_store.save_config(cfg)
+        # Re-initialise bot with new token
+        if cfg.token:
+            bot = TelegramBot(cfg.token)
+            _state["bot"] = bot
+            _state["dispatcher"] = NotificationDispatcher(bot, tg_store)
+        return {"ok": True}
+
+    class SetWebhookBody(BaseModel):
+        url: str
+
+    @app.post("/api/telegram/setwebhook")
+    async def set_telegram_webhook(body: SetWebhookBody):
+        bot = _state.get("bot")
+        if not bot:
+            raise HTTPException(503, "Telegram bot not configured — set token first")
+        tg_store = _get_tg_store()
+        cfg = tg_store.config
+        result = bot.set_webhook(body.url, secret_token=cfg.webhook_secret or None)
+        if result.get("ok"):
+            cfg.webhook_url = body.url
+            tg_store.save_config(cfg)
+            return {"ok": True, "webhook_url": body.url}
+        raise HTTPException(502, f"Telegram error: {result.get('description')}")
+
+    # ---------------------------------------------------------------- #
+    # Telegram – Users admin API
+    # ---------------------------------------------------------------- #
+
+    @app.get("/api/telegram/users")
+    async def list_telegram_users():
+        users = list(_get_tg_store().users.values())
+        return {
+            "total": len(users),
+            "users": [u.to_dict() for u in users],
+        }
+
+    @app.delete("/api/telegram/users/{chat_id}")
+    async def delete_telegram_user(chat_id: int):
+        tg_store = _get_tg_store()
+        if tg_store.get_user(chat_id) is None:
+            raise HTTPException(404, "User not found")
+        tg_store.delete_user(chat_id)
+        return {"ok": True}
+
+    @app.get("/api/telegram/subscriptions")
+    async def list_telegram_subscriptions():
+        subs = _get_tg_store().subscriptions
+        return {
+            "total_wallets": len(subs),
+            "subscriptions": {addr: ids for addr, ids in subs.items()},
+        }
+
+    class TestNotifyBody(BaseModel):
+        chat_id: int
+        message: str = "🧪 Test notification from Crypto Accounting System"
+
+    @app.post("/api/telegram/notify/test")
+    async def send_test_notification(body: TestNotifyBody):
+        bot = _state.get("bot")
+        if not bot:
+            raise HTTPException(503, "Telegram bot not configured")
+        result = bot.send_message(body.chat_id, body.message)
+        if result.get("ok"):
+            return {"ok": True}
+        raise HTTPException(502, f"Telegram error: {result.get('description')}")
 
     return app
 

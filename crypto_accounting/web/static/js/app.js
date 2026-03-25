@@ -96,6 +96,7 @@ const pageTitles = {
   fiat:         "Fiat Accounts",
   exchange:     "Exchange Rates",
   settings:     "Settings",
+  telegram:     "Telegram Bot",
 };
 
 const pageLoaders = {
@@ -107,6 +108,7 @@ const pageLoaders = {
   fiat:         loadFiatAccounts,
   exchange:     loadExchangeRates,
   settings:     loadSettings,
+  telegram:     loadTelegramPage,
 };
 
 // ============================================================
@@ -880,3 +882,163 @@ async function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
+
+// ============================================================
+// Telegram Admin Panel
+// ============================================================
+
+async function loadTelegramPage() {
+  await loadTelegramConfig();
+  await loadTelegramUsers();
+  await loadTelegramSubscriptions();
+}
+
+async function loadTelegramConfig() {
+  try {
+    const cfg = await api.get("/telegram/config");
+    // Badge
+    const badge = document.getElementById("tg-bot-badge");
+    if (cfg.bot_connected) {
+      badge.textContent = `Connected @${cfg.bot_username || "bot"}`;
+      badge.className = "badge badge-success";
+    } else if (cfg.token_set) {
+      badge.textContent = "Token set — not verified";
+      badge.className = "badge badge-warning";
+    } else {
+      badge.textContent = "Not configured";
+      badge.className = "badge badge-secondary";
+    }
+    // Fields — never show the actual token
+    document.getElementById("tg-token-input").value = "";
+    document.getElementById("tg-secret-input").value = "";
+    document.getElementById("tg-admins-input").value = (cfg.admin_chat_ids || []).join(", ");
+    document.getElementById("tg-notif-toggle").checked = cfg.notifications_enabled !== false;
+    // Webhook
+    if (cfg.webhook_url) {
+      document.getElementById("tg-webhook-input").value = cfg.webhook_url;
+      document.getElementById("tg-current-webhook").textContent = cfg.webhook_url;
+      document.getElementById("tg-webhook-info").classList.remove("hidden");
+    }
+  } catch (e) {
+    tgBanner(`Failed to load config: ${e.message}`, "error");
+  }
+}
+
+async function saveTelegramConfig() {
+  const tokenInput = document.getElementById("tg-token-input").value.trim();
+  const secretInput = document.getElementById("tg-secret-input").value.trim();
+  const adminsRaw = document.getElementById("tg-admins-input").value;
+  const notifEnabled = document.getElementById("tg-notif-toggle").checked;
+
+  const adminIds = adminsRaw.split(",")
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => !isNaN(n));
+
+  const body = { admin_chat_ids: adminIds, notifications_enabled: notifEnabled };
+  if (tokenInput) body.token = tokenInput;
+  if (secretInput) body.webhook_secret = secretInput;
+
+  try {
+    await api.put("/telegram/config", body);
+    tgBanner("Configuration saved.", "success");
+    await loadTelegramConfig();
+  } catch (e) {
+    tgBanner(`Save failed: ${e.message}`, "error");
+  }
+}
+
+async function registerWebhook() {
+  const url = document.getElementById("tg-webhook-input").value.trim();
+  if (!url) { tgBanner("Enter a webhook URL first.", "error"); return; }
+  try {
+    await api.post("/telegram/setwebhook", { url });
+    tgBanner(`Webhook registered: ${url}`, "success");
+    document.getElementById("tg-current-webhook").textContent = url;
+    document.getElementById("tg-webhook-info").classList.remove("hidden");
+  } catch (e) {
+    tgBanner(`Webhook error: ${e.message}`, "error");
+  }
+}
+
+async function sendTestNotification() {
+  const chatId = parseInt(document.getElementById("tg-test-chatid").value, 10);
+  const message = document.getElementById("tg-test-msg").value.trim();
+  if (!chatId) { tgBanner("Enter a Chat ID.", "error"); return; }
+  try {
+    await api.post("/telegram/notify/test", { chat_id: chatId, message });
+    tgBanner("Test notification sent!", "success");
+  } catch (e) {
+    tgBanner(`Failed: ${e.message}`, "error");
+  }
+}
+
+async function loadTelegramUsers() {
+  try {
+    const data = await api.get("/telegram/users");
+    const tbody = document.getElementById("tg-users-tbody");
+    if (!data.users || data.users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No users yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.users.map(u => `
+      <tr>
+        <td><code>${u.chat_id}</code></td>
+        <td>${u.username ? `@${u.username}` : "—"}</td>
+        <td>${u.first_name || "—"}</td>
+        <td>${u.wallets?.length || 0}</td>
+        <td>${u.notifications_enabled ? "🔔 ON" : "🔕 OFF"}</td>
+        <td>${u.is_admin ? "👑 Admin" : "User"}</td>
+        <td>${u.registered_at ? u.registered_at.slice(0, 10) : "—"}</td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="deleteTelegramUser(${u.chat_id})">Remove</button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    document.getElementById("tg-users-tbody").innerHTML =
+      `<tr><td colspan="8" class="empty-state text-error">${e.message}</td></tr>`;
+  }
+}
+
+async function deleteTelegramUser(chatId) {
+  if (!confirm(`Remove user ${chatId}? They will lose their subscriptions.`)) return;
+  try {
+    await api.del(`/telegram/users/${chatId}`);
+    toast("User removed", "success");
+    await loadTelegramUsers();
+    await loadTelegramSubscriptions();
+  } catch (e) {
+    toast(`Error: ${e.message}`, "error");
+  }
+}
+
+async function loadTelegramSubscriptions() {
+  try {
+    const data = await api.get("/telegram/subscriptions");
+    const tbody = document.getElementById("tg-subs-tbody");
+    const subs = data.subscriptions || {};
+    const keys = Object.keys(subs);
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-state">No wallet subscriptions yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = keys.map(addr => `
+      <tr>
+        <td><code>${addr}</code></td>
+        <td>${subs[addr].length}</td>
+        <td>${subs[addr].map(id => `<code>${id}</code>`).join(", ")}</td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    document.getElementById("tg-subs-tbody").innerHTML =
+      `<tr><td colspan="3" class="empty-state text-error">${e.message}</td></tr>`;
+  }
+}
+
+function tgBanner(msg, type = "success") {
+  const el = document.getElementById("tg-status-banner");
+  el.textContent = msg;
+  el.className = `alert alert-${type}`;
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), 5000);
+}

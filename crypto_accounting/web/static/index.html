@@ -58,6 +58,9 @@
     <button class="nav-item" data-page="settings">
       <span class="nav-icon">⚙️</span> Settings
     </button>
+    <button class="nav-item" data-page="telegram">
+      <span class="nav-icon">📲</span> Telegram Bot
+    </button>
   </div>
 
   <div class="sidebar-footer">
@@ -737,6 +740,151 @@
             </thead>
             <tbody id="fiat-ledger-body">
               <tr><td colspan="9" class="empty-state">Select a currency above to view its ledger.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         TELEGRAM BOT ADMIN PANEL
+         ============================================================ -->
+    <section class="page" id="page-telegram">
+      <div class="page-header">
+        <h2>📲 Telegram Bot</h2>
+        <p class="page-subtitle">Manage notifications and wallet subscriptions</p>
+      </div>
+
+      <!-- Status banner -->
+      <div id="tg-status-banner" class="alert hidden"></div>
+
+      <!-- Connection card -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3 class="card-title">Bot Connection</h3>
+          <span id="tg-bot-badge" class="badge badge-secondary">Not configured</span>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label class="form-label">Bot Token</label>
+              <input type="password" id="tg-token-input" class="form-control" placeholder="1234567890:ABCdef…" autocomplete="off">
+              <small class="form-hint">Get from <a href="https://t.me/BotFather" target="_blank">@BotFather</a> — stored securely, never exposed in UI</small>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Webhook Secret (optional)</label>
+              <input type="password" id="tg-secret-input" class="form-control" placeholder="random string" autocomplete="off">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:2">
+              <label class="form-label">Admin Chat IDs</label>
+              <input type="text" id="tg-admins-input" class="form-control" placeholder="123456789, 987654321">
+              <small class="form-hint">Comma-separated Telegram chat IDs. Admins get import summaries and /admin commands.</small>
+            </div>
+            <div class="form-group" style="flex:1; align-items: center;">
+              <label class="form-label">Global Notifications</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="tg-notif-toggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="btn btn-primary" onclick="saveTelegramConfig()">Save Configuration</button>
+            <button class="btn btn-secondary" onclick="loadTelegramConfig()">Reload</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Webhook card -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3 class="card-title">Webhook</h3>
+        </div>
+        <div class="card-body">
+          <p class="form-hint mb-3">For production (Vercel), register your app URL as the webhook so Telegram sends updates in real-time.</p>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Webhook URL</label>
+              <input type="url" id="tg-webhook-input" class="form-control" placeholder="https://your-app.vercel.app/api/telegram/webhook">
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="btn btn-primary" onclick="registerWebhook()">Register Webhook</button>
+          </div>
+          <div id="tg-webhook-info" class="mt-3 hidden">
+            <p>Current webhook: <code id="tg-current-webhook">—</code></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Test notification -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3 class="card-title">Test Notification</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Target Chat ID</label>
+              <input type="number" id="tg-test-chatid" class="form-control" placeholder="Your Telegram chat ID">
+            </div>
+            <div class="form-group" style="flex:2">
+              <label class="form-label">Message</label>
+              <input type="text" id="tg-test-msg" class="form-control" value="🧪 Test notification from Crypto Accounting System">
+            </div>
+          </div>
+          <div class="button-row">
+            <button class="btn btn-secondary" onclick="sendTestNotification()">Send Test</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registered users -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3 class="card-title">Registered Users</h3>
+          <button class="btn btn-sm btn-secondary" onclick="loadTelegramUsers()">Refresh</button>
+        </div>
+        <div class="card-body p-0">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Chat ID</th>
+                <th>Username</th>
+                <th>Name</th>
+                <th>Wallets</th>
+                <th>Notifications</th>
+                <th>Role</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tg-users-tbody">
+              <tr><td colspan="8" class="empty-state">No users yet — share your bot and let users /start</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Wallet subscriptions -->
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Wallet Subscriptions</h3>
+          <button class="btn btn-sm btn-secondary" onclick="loadTelegramSubscriptions()">Refresh</button>
+        </div>
+        <div class="card-body p-0">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Wallet Address</th>
+                <th>Subscribers</th>
+                <th>Chat IDs</th>
+              </tr>
+            </thead>
+            <tbody id="tg-subs-tbody">
+              <tr><td colspan="3" class="empty-state">No wallet subscriptions yet</td></tr>
             </tbody>
           </table>
         </div>

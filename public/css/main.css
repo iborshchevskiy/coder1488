@@ -549,3 +549,52 @@ input:focus, select:focus, textarea:focus {
   #sidebar { display: none; }
   .kpi-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ---- Telegram admin panel ---- */
+.alert {
+  padding: .75rem 1rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: .9rem;
+}
+.alert-success { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+.alert-error   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.alert-warning { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+  margin-top: .5rem;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--clr-border);
+  border-radius: 26px;
+  transition: background .2s;
+}
+.toggle-slider:before {
+  content: "";
+  position: absolute;
+  width: 20px; height: 20px;
+  left: 3px; bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .2s;
+}
+.toggle-switch input:checked + .toggle-slider { background: var(--clr-accent); }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(22px); }
+
+.badge-success  { background: #d1fae5; color: #065f46; }
+.badge-warning  { background: #fef3c7; color: #92400e; }
+.badge-secondary { background: var(--clr-surface-2); color: var(--clr-text-muted); }
+
+.form-hint { color: var(--clr-text-muted); font-size: .8rem; margin-top: .25rem; }
+.form-hint a { color: var(--clr-accent); }
+.mb-4 { margin-bottom: 1.5rem; }
+.mt-3 { margin-top: 1rem; }
+.text-error { color: #ef4444; }
