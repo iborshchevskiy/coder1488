@@ -9,13 +9,74 @@
 // API helpers
 // ============================================================
 
+// ============================================================
+// Auth token helpers
+// ============================================================
+
+function getAuthToken() { return localStorage.getItem("auth_token"); }
+function setAuthToken(t) { localStorage.setItem("auth_token", t); }
+function clearAuthToken() { localStorage.removeItem("auth_token"); }
+
+function _authHeaders(extra = {}) {
+  const h = { ...extra };
+  const t = getAuthToken();
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
+}
+
+async function _handleResponse(r) {
+  if (r.status === 401) {
+    clearAuthToken();
+    showAuthOverlay();
+    throw new Error("Session expired — please sign in again");
+  }
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.detail || r.statusText);
+  }
+  return r.json();
+}
+
 const api = {
   async get(path) {
-    const r = await fetch(`/api${path}`);
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-    return r.json();
+    const r = await fetch(`/api${path}`, { headers: _authHeaders() });
+    return _handleResponse(r);
   },
   async post(path, body) {
+    const r = await fetch(`/api${path}`, {
+      method: "POST",
+      headers: _authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    return _handleResponse(r);
+  },
+  async put(path, body) {
+    const r = await fetch(`/api${path}`, {
+      method: "PUT",
+      headers: _authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body),
+    });
+    return _handleResponse(r);
+  },
+  async del(path) {
+    const r = await fetch(`/api${path}`, {
+      method: "DELETE",
+      headers: _authHeaders(),
+    });
+    return _handleResponse(r);
+  },
+  async uploadFile(path, file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`/api${path}`, {
+      method: "POST",
+      headers: _authHeaders(),
+      body: fd,
+    });
+    return _handleResponse(r);
+  },
+  /** Auth calls bypass the _handleResponse 401 redirect to avoid loops */
+  async authPost(path, body) {
     const r = await fetch(`/api${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -24,24 +85,12 @@ const api = {
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
   },
-  async put(path, body) {
+  async authPut(path, body) {
     const r = await fetch(`/api${path}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: _authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body),
     });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-    return r.json();
-  },
-  async del(path) {
-    const r = await fetch(`/api${path}`, { method: "DELETE" });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
-    return r.json();
-  },
-  async uploadFile(path, file) {
-    const fd = new FormData();
-    fd.append("file", file);
-    const r = await fetch(`/api${path}`, { method: "POST", body: fd });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
     return r.json();
   },
@@ -609,6 +658,7 @@ async function submitBlockchainImport(chain) {
 // ============================================================
 
 async function loadSettings() {
+  loadProfile();
   try {
     const cfg = await api.get("/config");
     state.config = cfg;
@@ -870,6 +920,12 @@ async function init() {
 
   // Settings
   document.getElementById("form-settings")?.addEventListener("submit", saveSettings);
+  document.getElementById("form-profile")?.addEventListener("submit", saveProfile);
+
+  // Seed phrase checkbox
+  document.getElementById("seed-saved-checkbox")?.addEventListener("change", function() {
+    document.getElementById("btn-seed-confirm").disabled = !this.checked;
+  });
 
   // Import tabs and upload zones
   setupImportTabs();
@@ -879,8 +935,8 @@ async function init() {
   setupUploadZone("zone-kraken", "file-kraken");
   setupUploadZone("zone-cryptodom", "file-cryptodom");
 
-  // Default page
-  navigate("dashboard");
+  // Auth initialisation (may redirect to overlay before loading dashboard)
+  await initAuth();
 }
 
 document.addEventListener("DOMContentLoaded", init);
@@ -1349,4 +1405,225 @@ function fmtNum(v) {
   const n = parseFloat(v) || 0;
   if (Math.abs(n) < 0.0001) return n.toExponential(4);
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 });
+}
+
+// ============================================================
+// Auth flow
+// ============================================================
+
+// Cached seed phrase – held in memory only until the user confirms
+let _pendingSeed = null;
+
+function showAuthOverlay() {
+  document.getElementById("auth-overlay").style.display = "block";
+  document.getElementById("sidebar").style.display = "none";
+  document.getElementById("main").style.display = "none";
+}
+
+function hideAuthOverlay() {
+  document.getElementById("auth-overlay").style.display = "none";
+  document.getElementById("sidebar").style.display = "";
+  document.getElementById("main").style.display = "";
+}
+
+async function initAuth() {
+  try {
+    const status = await fetch("/api/auth/status").then(r => r.json());
+
+    if (!status.registered) {
+      // First run – show registration
+      showAuthOverlay();
+      showRegisterPanel();
+      return;
+    }
+
+    const token = getAuthToken();
+    if (!token) {
+      // Registered but no token in storage – show login
+      showAuthOverlay();
+      showLoginPanel(status.account_type);
+      return;
+    }
+
+    // Try a lightweight authenticated request to verify the token is still valid
+    const probe = await fetch("/api/auth/profile", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (probe.status === 401) {
+      clearAuthToken();
+      showAuthOverlay();
+      showLoginPanel(status.account_type);
+      return;
+    }
+
+    // Token is valid – proceed to app
+    hideAuthOverlay();
+    navigate("dashboard");
+  } catch {
+    // Network error – proceed without auth (offline / dev mode)
+    hideAuthOverlay();
+    navigate("dashboard");
+  }
+}
+
+// ---- Registration ----
+
+function showRegisterPanel() {
+  document.getElementById("auth-panel-register").style.display = "block";
+  document.getElementById("auth-panel-login").style.display = "none";
+  authSwitchTab("classic");
+}
+
+function authSwitchTab(mode) {
+  document.getElementById("reg-classic").style.display   = mode === "classic"   ? "block" : "none";
+  document.getElementById("reg-anonymous").style.display = mode === "anonymous" ? "block" : "none";
+  document.getElementById("tab-classic").className   = "btn btn-sm " + (mode === "classic"   ? "btn-primary" : "btn-secondary");
+  document.getElementById("tab-anonymous").className = "btn btn-sm " + (mode === "anonymous" ? "btn-primary" : "btn-secondary");
+}
+
+async function submitRegister(event, mode) {
+  if (event) event.preventDefault();
+
+  if (mode === "classic") {
+    const username = document.getElementById("reg-username").value.trim();
+    const password  = document.getElementById("reg-password").value;
+    const password2 = document.getElementById("reg-password2").value;
+    if (!username) { toast("Username is required", "error"); return; }
+    if (password !== password2) { toast("Passwords do not match", "error"); return; }
+  }
+
+  const body = { account_type: mode };
+  if (mode === "classic") {
+    body.username = document.getElementById("reg-username").value.trim();
+    body.password = document.getElementById("reg-password").value;
+  }
+
+  try {
+    const result = await api.authPost("/auth/register", body);
+    setAuthToken(result.token);
+    _pendingSeed = result.seed_phrase;
+    showSeedPhraseModal(result.seed_phrase);
+  } catch (e) {
+    toast("Registration failed: " + e.message, "error");
+  }
+}
+
+// ---- Seed phrase modal ----
+
+function showSeedPhraseModal(phrase) {
+  const words = phrase.split(" ");
+  const grid = document.getElementById("seed-word-grid");
+  grid.innerHTML = "";
+  words.forEach((w, i) => {
+    const cell = document.createElement("div");
+    cell.style.cssText = "background:var(--clr-sidebar-bg); border-radius:var(--radius); padding:.4rem .6rem; font-size:.82rem; font-family:monospace;";
+    cell.innerHTML = `<span style="color:var(--clr-text-muted); margin-right:.35rem; font-size:.7rem;">${i+1}.</span>${w}`;
+    grid.appendChild(cell);
+  });
+  document.getElementById("seed-full-text").textContent = phrase;
+  document.getElementById("seed-saved-checkbox").checked = false;
+  document.getElementById("btn-seed-confirm").disabled = true;
+  const modal = document.getElementById("modal-seed");
+  modal.style.display = "flex";
+}
+
+function copySeedPhrase() {
+  const text = document.getElementById("seed-full-text").textContent;
+  navigator.clipboard.writeText(text)
+    .then(() => toast("Seed phrase copied!", "success"))
+    .catch(() => toast("Copy failed — select and copy manually", "error"));
+}
+
+function confirmSeedPhrase() {
+  document.getElementById("modal-seed").style.display = "none";
+  _pendingSeed = null;
+  hideAuthOverlay();
+  navigate("dashboard");
+}
+
+// ---- Login ----
+
+function showLoginPanel(accountType) {
+  document.getElementById("auth-panel-register").style.display = "none";
+  document.getElementById("auth-panel-login").style.display = "block";
+  loginSwitchTab(accountType || "classic");
+}
+
+function loginSwitchTab(mode) {
+  document.getElementById("login-classic").style.display   = mode === "classic"   ? "block" : "none";
+  document.getElementById("login-anonymous").style.display = mode === "anonymous" ? "block" : "none";
+  document.getElementById("login-tab-classic").className   = "btn btn-sm " + (mode === "classic"   ? "btn-primary" : "btn-secondary");
+  document.getElementById("login-tab-anonymous").className = "btn btn-sm " + (mode === "anonymous" ? "btn-primary" : "btn-secondary");
+}
+
+async function submitLogin(event, mode) {
+  if (event) event.preventDefault();
+
+  const body = { account_type: mode };
+  if (mode === "classic") {
+    body.username = document.getElementById("login-username").value.trim();
+    body.password = document.getElementById("login-password").value;
+  } else {
+    body.seed_phrase = document.getElementById("login-seed").value.trim();
+  }
+
+  try {
+    const result = await api.authPost("/auth/login", body);
+    setAuthToken(result.token);
+    hideAuthOverlay();
+    navigate("dashboard");
+    toast("Signed in successfully", "success");
+  } catch (e) {
+    toast("Sign in failed: " + e.message, "error");
+  }
+}
+
+// ---- Password strength meter ----
+
+function updatePasswordStrength() {
+  const pwd = document.getElementById("reg-password").value;
+  const bar = document.getElementById("pwd-strength-bar");
+  const lbl = document.getElementById("pwd-strength-label");
+
+  let score = 0;
+  if (pwd.length >= 12) score++;
+  if (/[A-Z]/.test(pwd))    score++;
+  if (/[a-z]/.test(pwd))    score++;
+  if (/\d/.test(pwd))        score++;
+  if (/[!@#$%^&*()\-_=+\[\]{}|;':",./<>?]/.test(pwd)) score++;
+
+  const pct = (score / 5) * 100;
+  const colours = ["#e53e3e","#e53e3e","#ed8936","#ecc94b","#38a169","#38a169"];
+  const labels  = ["","Too weak","Weak","Fair","Good","Strong"];
+  bar.style.width = pct + "%";
+  bar.style.background = colours[score];
+  lbl.textContent = labels[score] || "";
+  lbl.style.color = colours[score];
+}
+
+// ---- Profile / settings ----
+
+async function loadProfile() {
+  try {
+    const p = await api.get("/auth/profile");
+    const typeLabel = p.account_type === "classic"
+      ? `Classic account — <strong>${p.username}</strong>`
+      : "Anonymous account";
+    document.getElementById("acct-info").innerHTML =
+      `<span>${typeLabel}</span>`;
+    document.getElementById("cfg-recovery-email").value = p.recovery_email || "";
+  } catch {
+    // Not registered or not authed yet – silently skip
+  }
+}
+
+async function saveProfile(e) {
+  e.preventDefault();
+  const email = document.getElementById("cfg-recovery-email").value.trim() || null;
+  try {
+    await api.authPut("/auth/profile", { recovery_email: email });
+    toast("Account settings saved");
+  } catch (err) {
+    toast("Save failed: " + err.message, "error");
+  }
 }

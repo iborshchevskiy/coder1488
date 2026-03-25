@@ -42,12 +42,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Request
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from ..config import Config, SUPPORTED_FIAT
+from .. import auth as _auth
 from ..engine.transaction_store import TransactionStore
 from ..engine.tax_engine import TaxEngine, CostBasisMethod
 from ..engine.portfolio import Portfolio
@@ -100,6 +101,11 @@ async def _lifespan(app: FastAPI):
     _state["storage"] = storage
     _state["config"] = storage.load_config()
     _state["store"] = storage.load_store()
+    _state["user"] = storage.load_user()
+    # Initialise auth secret key (file-based storage only; KV uses env var)
+    auth_key_dir = _DATA_DIR if isinstance(storage, FileStorage) else Path("/tmp/crypto_auth")
+    auth_key_dir.mkdir(parents=True, exist_ok=True)
+    _auth.init_secret_key(auth_key_dir)
     cache_dir = _DATA_DIR if isinstance(storage, FileStorage) else Path("/tmp/crypto_fx_cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
     _state["converter"] = FiatConverter(_get_config(), cache_dir)
@@ -128,6 +134,151 @@ def create_app() -> FastAPI:
         version="2.0.0",
         lifespan=_lifespan,
     )
+
+    # ---------------------------------------------------------------- #
+    # Auth middleware – protect all /api/* except /api/auth/*
+    # ---------------------------------------------------------------- #
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        path = request.url.path
+        # Pass through non-API routes and auth endpoints
+        if not path.startswith("/api/") or path.startswith("/api/auth/"):
+            return await call_next(request)
+        user = _state.get("user")
+        # No user registered yet → open access (first-run)
+        if user is None:
+            return await call_next(request)
+        # Registered → require valid session token
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
+            )
+        token = auth_header[7:]
+        if not _auth.verify_session_token(token):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired session — please log in again"},
+            )
+        return await call_next(request)
+
+    # ---------------------------------------------------------------- #
+    # Auth endpoints
+    # ---------------------------------------------------------------- #
+
+    class RegisterBody(BaseModel):
+        account_type: str          # "classic" | "anonymous"
+        username: Optional[str] = None
+        password: Optional[str] = None
+
+    @app.get("/api/auth/status")
+    async def auth_status():
+        user = _state.get("user")
+        if user is None:
+            return {"registered": False}
+        return {
+            "registered": True,
+            "account_type": user.account_type,
+            "username": user.username,
+        }
+
+    @app.post("/api/auth/register")
+    async def register(body: RegisterBody):
+        if _state.get("user") is not None:
+            raise HTTPException(409, "An account already exists")
+
+        if body.account_type == "classic":
+            if not body.username or not body.username.strip():
+                raise HTTPException(400, "Username is required for classic registration")
+            if not body.password:
+                raise HTTPException(400, "Password is required for classic registration")
+            ok, msg = _auth.check_password_strength(body.password)
+            if not ok:
+                raise HTTPException(400, f"Weak password: {msg}")
+            ph, ps = _auth.hash_password(body.password)
+            seed = _auth.generate_seed_phrase()
+            user = _auth.UserAccount(
+                account_type="classic",
+                username=body.username.strip(),
+                password_hash=ph,
+                password_salt=ps,
+                seed_hash=_auth.hash_seed(seed),
+            )
+        elif body.account_type == "anonymous":
+            seed = _auth.generate_seed_phrase()
+            user = _auth.UserAccount(
+                account_type="anonymous",
+                username=None,
+                password_hash=None,
+                password_salt=None,
+                seed_hash=_auth.hash_seed(seed),
+            )
+        else:
+            raise HTTPException(400, "account_type must be 'classic' or 'anonymous'")
+
+        _state["storage"].save_user(user)
+        _state["user"] = user
+        token = _auth.create_session_token()
+        return {"ok": True, "seed_phrase": seed, "token": token}
+
+    class LoginBody(BaseModel):
+        account_type: str
+        username: Optional[str] = None
+        password: Optional[str] = None
+        seed_phrase: Optional[str] = None
+
+    @app.post("/api/auth/login")
+    async def login(body: LoginBody):
+        user = _state.get("user")
+        if user is None:
+            raise HTTPException(404, "No account registered")
+        if user.account_type != body.account_type:
+            raise HTTPException(400, "Account type mismatch")
+
+        if body.account_type == "classic":
+            if not body.username or not body.password:
+                raise HTTPException(400, "Username and password required")
+            if user.username != body.username.strip():
+                raise HTTPException(401, "Invalid credentials")
+            if not _auth.verify_password(body.password, user.password_hash, user.password_salt):
+                raise HTTPException(401, "Invalid credentials")
+        elif body.account_type == "anonymous":
+            if not body.seed_phrase:
+                raise HTTPException(400, "Seed phrase required for anonymous login")
+            if not _auth.verify_seed(body.seed_phrase, user.seed_hash):
+                raise HTTPException(401, "Invalid seed phrase")
+        else:
+            raise HTTPException(400, "Unknown account type")
+
+        token = _auth.create_session_token()
+        return {"ok": True, "token": token}
+
+    @app.get("/api/auth/profile")
+    async def get_profile():
+        user = _state.get("user")
+        if user is None:
+            raise HTTPException(404, "No account registered")
+        return {
+            "account_type": user.account_type,
+            "username": user.username,
+            "recovery_email": user.recovery_email,
+            "created_at": user.created_at,
+        }
+
+    class ProfileUpdate(BaseModel):
+        recovery_email: Optional[str] = None
+
+    @app.put("/api/auth/profile")
+    async def update_profile(body: ProfileUpdate):
+        user = _state.get("user")
+        if user is None:
+            raise HTTPException(404, "No account registered")
+        user.recovery_email = body.recovery_email or None
+        _state["storage"].save_user(user)
+        _state["user"] = user
+        return {"ok": True, "recovery_email": user.recovery_email}
 
     # Serve the single-page UI
     static_dir = Path(__file__).parent / "static"

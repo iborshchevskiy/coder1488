@@ -18,6 +18,7 @@ from typing import List, Optional
 from .models.transaction import Transaction
 from .engine.transaction_store import TransactionStore
 from .config import Config
+from .auth import UserAccount
 
 
 # ------------------------------------------------------------------ #
@@ -41,6 +42,14 @@ class Storage(ABC):
 
     @abstractmethod
     def save_store(self, store: TransactionStore) -> None:
+        ...
+
+    @abstractmethod
+    def load_user(self) -> Optional["UserAccount"]:
+        ...
+
+    @abstractmethod
+    def save_user(self, user: "UserAccount") -> None:
         ...
 
 
@@ -68,6 +77,19 @@ class FileStorage(Storage):
 
     def save_store(self, store: TransactionStore) -> None:
         store.save_csv(self._ledger_path)
+
+    def load_user(self) -> Optional[UserAccount]:
+        user_path = self._data_dir / "user.json"
+        if not user_path.exists():
+            return None
+        try:
+            return UserAccount.from_dict(json.loads(user_path.read_text()))
+        except Exception:
+            return None
+
+    def save_user(self, user: UserAccount) -> None:
+        user_path = self._data_dir / "user.json"
+        user_path.write_text(json.dumps(user.to_dict(), indent=2))
 
     @property
     def data_dir(self) -> Path:
@@ -155,6 +177,22 @@ class VercelKVStorage(Storage):
     def save_store(self, store: TransactionStore) -> None:
         items = [t.to_dict() for t in store.all()]
         self._set(self._KEY_TXN, json.dumps(items, default=str))
+
+    # -- User account --------------------------------------------------
+
+    _KEY_USER = "user"
+
+    def load_user(self) -> Optional[UserAccount]:
+        raw = self._get(self._KEY_USER)
+        if raw:
+            try:
+                return UserAccount.from_dict(json.loads(raw))
+            except Exception:
+                pass
+        return None
+
+    def save_user(self, user: UserAccount) -> None:
+        self._set(self._KEY_USER, json.dumps(user.to_dict()))
 
 
 # ------------------------------------------------------------------ #

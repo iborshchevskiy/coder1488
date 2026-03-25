@@ -674,6 +674,30 @@
           </form>
         </div>
       </div>
+
+      <!-- Account / Security card -->
+      <div class="card" style="max-width:640px; margin-top:1.25rem;">
+        <div class="card-header"><span class="card-title">Account &amp; Security</span></div>
+        <div class="card-body">
+          <div id="acct-info" style="margin-bottom:1.25rem; font-size:.875rem; color:var(--clr-text-muted);">
+            Loading…
+          </div>
+          <form id="form-profile" onsubmit="saveProfile(event)">
+            <div class="field" style="margin-bottom:1.25rem;">
+              <label for="cfg-recovery-email">Recovery Email <span style="font-weight:400; color:var(--clr-text-muted);">(optional)</span></label>
+              <input id="cfg-recovery-email" type="email"
+                     placeholder="your@email.com"
+                     autocomplete="email" />
+              <div style="font-size:.75rem; color:var(--clr-text-muted); margin-top:.3rem;">
+                Used for future password/seed recovery. Never shared.
+              </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end;">
+              <button class="btn btn-primary" type="submit">Save Account Settings</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
 
     <!-- ======================== FIAT ACCOUNTS ======================== -->
@@ -1209,6 +1233,197 @@
 
 <!-- Toast container -->
 <div id="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+<!-- ============================================================
+     AUTH OVERLAY – shown before the app when auth is required
+     ============================================================ -->
+<div id="auth-overlay" style="display:none; position:fixed; inset:0; z-index:9000;
+     background:var(--clr-bg); overflow-y:auto;">
+  <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:2rem;">
+    <div style="width:100%; max-width:440px;">
+
+      <!-- Logo -->
+      <div style="text-align:center; margin-bottom:2rem;">
+        <div style="font-size:2.5rem; margin-bottom:.5rem;">₿</div>
+        <div style="font-size:1.4rem; font-weight:700; color:var(--clr-text);">Crypto Accounting</div>
+      </div>
+
+      <!-- ---- REGISTRATION PANEL ---- -->
+      <div id="auth-panel-register" style="display:none;">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Create Account</span>
+          </div>
+          <div class="card-body">
+
+            <!-- Mode tabs -->
+            <div style="display:flex; gap:.5rem; margin-bottom:1.5rem;">
+              <button id="tab-classic" class="btn btn-primary btn-sm"
+                      onclick="authSwitchTab('classic')" style="flex:1;">
+                Classic
+              </button>
+              <button id="tab-anonymous" class="btn btn-secondary btn-sm"
+                      onclick="authSwitchTab('anonymous')" style="flex:1;">
+                Anonymous
+              </button>
+            </div>
+
+            <!-- Classic form -->
+            <div id="reg-classic">
+              <form id="form-register-classic" onsubmit="submitRegister(event,'classic')">
+                <div class="field" style="margin-bottom:1rem;">
+                  <label for="reg-username">Username</label>
+                  <input id="reg-username" type="text" autocomplete="username"
+                         placeholder="Choose a username" />
+                </div>
+                <div class="field" style="margin-bottom:.5rem;">
+                  <label for="reg-password">Password</label>
+                  <input id="reg-password" type="password" autocomplete="new-password"
+                         placeholder="At least 12 chars, mixed case, digit, symbol"
+                         oninput="updatePasswordStrength()" />
+                </div>
+                <!-- Strength bar -->
+                <div style="margin-bottom:.75rem;">
+                  <div style="height:4px; border-radius:2px; background:var(--clr-border); overflow:hidden;">
+                    <div id="pwd-strength-bar"
+                         style="height:100%; width:0%; transition:width .3s, background .3s; border-radius:2px;"></div>
+                  </div>
+                  <div id="pwd-strength-label"
+                       style="font-size:.72rem; color:var(--clr-text-muted); margin-top:.25rem;"></div>
+                </div>
+                <div class="field" style="margin-bottom:1.25rem;">
+                  <label for="reg-password2">Confirm Password</label>
+                  <input id="reg-password2" type="password" autocomplete="new-password"
+                         placeholder="Repeat password" />
+                </div>
+                <button class="btn btn-primary" type="submit" style="width:100%;">
+                  Create Account
+                </button>
+              </form>
+            </div>
+
+            <!-- Anonymous form -->
+            <div id="reg-anonymous" style="display:none;">
+              <p style="font-size:.875rem; color:var(--clr-text-muted); margin-bottom:1.25rem; line-height:1.6;">
+                No username or password needed. You will receive a <strong>12-word recovery
+                seed phrase</strong> — keep it safe. It is the only way to access your account.
+              </p>
+              <button class="btn btn-primary" style="width:100%;"
+                      onclick="submitRegister(event,'anonymous')">
+                Generate Anonymous Account
+              </button>
+            </div>
+
+          </div>
+        </div>
+      </div><!-- /register panel -->
+
+      <!-- ---- LOGIN PANEL ---- -->
+      <div id="auth-panel-login" style="display:none;">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Sign In</span>
+          </div>
+          <div class="card-body">
+
+            <!-- Mode tabs -->
+            <div style="display:flex; gap:.5rem; margin-bottom:1.5rem;">
+              <button id="login-tab-classic" class="btn btn-primary btn-sm"
+                      onclick="loginSwitchTab('classic')" style="flex:1;">
+                Classic
+              </button>
+              <button id="login-tab-anonymous" class="btn btn-secondary btn-sm"
+                      onclick="loginSwitchTab('anonymous')" style="flex:1;">
+                Anonymous
+              </button>
+            </div>
+
+            <!-- Classic login -->
+            <div id="login-classic">
+              <form id="form-login-classic" onsubmit="submitLogin(event,'classic')">
+                <div class="field" style="margin-bottom:1rem;">
+                  <label for="login-username">Username</label>
+                  <input id="login-username" type="text" autocomplete="username"
+                         placeholder="Your username" />
+                </div>
+                <div class="field" style="margin-bottom:1.25rem;">
+                  <label for="login-password">Password</label>
+                  <input id="login-password" type="password" autocomplete="current-password"
+                         placeholder="Your password" />
+                </div>
+                <button class="btn btn-primary" type="submit" style="width:100%;">
+                  Sign In
+                </button>
+              </form>
+            </div>
+
+            <!-- Anonymous login -->
+            <div id="login-anonymous" style="display:none;">
+              <form id="form-login-anon" onsubmit="submitLogin(event,'anonymous')">
+                <div class="field" style="margin-bottom:1.25rem;">
+                  <label for="login-seed">Recovery Seed Phrase</label>
+                  <textarea id="login-seed" rows="3"
+                            style="font-family:monospace; font-size:.85rem; resize:vertical;"
+                            placeholder="Enter your 12-word seed phrase…"></textarea>
+                </div>
+                <button class="btn btn-primary" type="submit" style="width:100%;">
+                  Sign In
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      </div><!-- /login panel -->
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     SEED PHRASE MODAL – shown exactly once after registration
+     ============================================================ -->
+<div id="modal-seed" style="display:none; position:fixed; inset:0; z-index:9100;
+     background:rgba(0,0,0,.65); display:none; align-items:center; justify-content:center; padding:1rem;">
+  <div class="modal" style="max-width:520px; width:100%;">
+    <div class="modal-header">
+      <span class="modal-title">Your Recovery Seed Phrase</span>
+    </div>
+    <div class="modal-body">
+      <div style="background:#fff3cd; border:1px solid #ffc107; border-radius:var(--radius);
+                  padding:.75rem 1rem; margin-bottom:1.25rem; font-size:.85rem; color:#664d03;">
+        <strong>Write this down now.</strong> This phrase is shown <em>only once</em> and
+        cannot be recovered. Anyone with this phrase can access your account.
+      </div>
+
+      <!-- Word grid -->
+      <div id="seed-word-grid"
+           style="display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem;
+                  margin-bottom:1.25rem; user-select:all;">
+      </div>
+
+      <!-- Full phrase (copyable) -->
+      <div style="background:var(--clr-sidebar-bg); border-radius:var(--radius);
+                  padding:.75rem 1rem; font-family:monospace; font-size:.85rem;
+                  word-break:break-all; margin-bottom:1rem;" id="seed-full-text"></div>
+
+      <button class="btn btn-secondary btn-sm" onclick="copySeedPhrase()" style="margin-bottom:1.25rem;">
+        Copy to Clipboard
+      </button>
+
+      <label style="display:flex; align-items:center; gap:.5rem; font-size:.875rem; cursor:pointer;">
+        <input type="checkbox" id="seed-saved-checkbox" />
+        I have securely saved my seed phrase
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="btn-seed-confirm"
+              onclick="confirmSeedPhrase()" disabled>
+        Continue to App
+      </button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
