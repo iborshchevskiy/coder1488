@@ -598,3 +598,91 @@ input:focus, select:focus, textarea:focus {
 .mb-4 { margin-bottom: 1.5rem; }
 .mt-3 { margin-top: 1rem; }
 .text-error { color: #ef4444; }
+
+/* ---- Custom Report Builder ---- */
+.multiselect-box {
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  padding: .4rem;
+  background: var(--clr-surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.multiselect-item {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .25rem .4rem;
+  border-radius: calc(var(--radius) / 2);
+  cursor: pointer;
+  font-size: .85rem;
+  user-select: none;
+}
+.multiselect-item:hover { background: var(--clr-surface-3, #2a2a3a); }
+.multiselect-placeholder { color: var(--clr-text-muted); font-size: .85rem; padding: .25rem; }
+
+.multiselect-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  padding: .4rem;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--radius);
+  background: var(--clr-surface-2);
+  min-height: 2.5rem;
+}
+.tag-checkbox {
+  display: inline-flex;
+  align-items: center;
+  padding: .25rem .65rem;
+  border-radius: 999px;
+  font-size: .8rem;
+  cursor: pointer;
+  border: 1px solid var(--clr-border);
+  background: var(--clr-surface-3, #2a2a3a);
+  user-select: none;
+  transition: background .15s, color .15s;
+}
+.tag-checkbox.tag-selected,
+.tag-checkbox:hover { opacity: 1; }
+.tag-checkbox.tag-green  { border-color: #6ee7b7; }
+.tag-checkbox.tag-red    { border-color: #fca5a5; }
+.tag-checkbox.tag-blue   { border-color: #93c5fd; }
+.tag-checkbox.tag-orange { border-color: #fdba74; }
+.tag-checkbox.tag-purple { border-color: #c4b5fd; }
+.tag-checkbox.tag-yellow { border-color: #fde68a; }
+.tag-checkbox.tag-teal   { border-color: #5eead4; }
+.tag-checkbox.tag-selected.tag-green  { background: #d1fae5; color: #065f46; }
+.tag-checkbox.tag-selected.tag-red    { background: #fee2e2; color: #991b1b; }
+.tag-checkbox.tag-selected.tag-blue   { background: #dbeafe; color: #1e40af; }
+.tag-checkbox.tag-selected.tag-orange { background: #ffedd5; color: #9a3412; }
+.tag-checkbox.tag-selected.tag-purple { background: #ede9fe; color: #5b21b6; }
+.tag-checkbox.tag-selected.tag-yellow { background: #fef9c3; color: #78350f; }
+.tag-checkbox.tag-selected.tag-teal   { background: #ccfbf1; color: #134e4a; }
+
+.empty-state-page {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: var(--clr-text-muted);
+}
+.empty-state-page .empty-icon { font-size: 3rem; margin-bottom: 1rem; }
+.table-subheader td { background: var(--clr-surface-2); font-size: .85rem; }
+.mono { font-family: var(--font-mono); font-size: .85rem; }
+.text-muted { color: var(--clr-text-muted); font-size: .85rem; }
+
+/* badge types for transaction type column */
+.badge-buy { background:#d1fae5;color:#065f46; }
+.badge-sell { background:#fee2e2;color:#991b1b; }
+.badge-receive { background:#dbeafe;color:#1e40af; }
+.badge-send { background:#ffedd5;color:#9a3412; }
+.badge-transfer_in { background:#dbeafe;color:#1e40af; }
+.badge-transfer_out { background:#ffedd5;color:#9a3412; }
+.badge-mining,.badge-income { background:#ede9fe;color:#5b21b6; }
+.badge-swap { background:#fef9c3;color:#78350f; }
+.badge-fee { background:#fee2e2;color:#991b1b; }
+.badge-type { border-radius: 4px; font-size: .72rem; padding: 2px 6px; }
+
+:root { --clr-success: #10b981; --clr-danger: #ef4444; }

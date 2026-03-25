@@ -39,6 +39,9 @@
     </button>
 
     <div class="nav-section-label">Reports</div>
+    <button class="nav-item" data-page="report-builder">
+      <span class="nav-icon">🔍</span> Custom Report
+    </button>
     <button class="nav-item" data-page="gains">
       <span class="nav-icon">📈</span> Capital Gains
     </button>
@@ -743,6 +746,188 @@
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         CUSTOM REPORT BUILDER
+         ============================================================ -->
+    <section class="page" id="page-report-builder">
+      <div class="page-header">
+        <h2>🔍 Custom Report</h2>
+        <p class="page-subtitle">Filter, group and export your transaction history</p>
+      </div>
+
+      <!-- ── Filter panel ── -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h3 class="card-title">Filters</h3>
+          <button class="btn btn-sm btn-ghost" onclick="resetReportFilters()">Reset</button>
+        </div>
+        <div class="card-body">
+
+          <!-- Row 1: date range -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">From</label>
+              <input type="date" id="rpt-date-from" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label">To</label>
+              <input type="date" id="rpt-date-to" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Quick range</label>
+              <select class="form-control" id="rpt-quick-range" onchange="applyQuickRange(this.value)">
+                <option value="">Custom</option>
+                <option value="ytd">Year to date</option>
+                <option value="last_year">Last year</option>
+                <option value="last_quarter">Last quarter</option>
+                <option value="last_month">Last month</option>
+                <option value="last_30">Last 30 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Row 2: wallets + assets -->
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Wallets <span class="form-hint">(empty = all)</span></label>
+              <div id="rpt-wallets-container" class="multiselect-box">
+                <div class="multiselect-placeholder">Loading wallets…</div>
+              </div>
+            </div>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">Assets <span class="form-hint">(empty = all)</span></label>
+              <div id="rpt-assets-container" class="multiselect-box">
+                <div class="multiselect-placeholder">Loading assets…</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Row 3: transaction types -->
+          <div class="form-group">
+            <label class="form-label">Transaction Types <span class="form-hint">(empty = all)</span></label>
+            <div id="rpt-types-container" class="multiselect-tags">
+              <div class="multiselect-placeholder">Loading types…</div>
+            </div>
+          </div>
+
+          <!-- Row 4: options -->
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Group by</label>
+              <select class="form-control" id="rpt-group-by">
+                <option value="">No grouping</option>
+                <option value="asset">Asset</option>
+                <option value="wallet">Wallet</option>
+                <option value="type">Transaction Type</option>
+                <option value="month">Month</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Report currency</label>
+              <select class="form-control" id="rpt-currency">
+                <option value="">System default</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+                <option value="CHF">CHF</option>
+                <option value="CAD">CAD</option>
+                <option value="AUD">AUD</option>
+                <option value="BTC">BTC (USD equiv)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Cost basis method</label>
+              <select class="form-control" id="rpt-method">
+                <option value="">System default</option>
+                <option value="fifo">FIFO</option>
+                <option value="lifo">LIFO</option>
+                <option value="hifo">HIFO</option>
+              </select>
+            </div>
+            <div class="form-group" style="align-items:center">
+              <label class="form-label">Include gains</label>
+              <label class="toggle-switch">
+                <input type="checkbox" id="rpt-include-gains">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button class="btn btn-primary" onclick="runReport()">Run Report</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Summary KPIs ── -->
+      <div id="rpt-summary" class="hidden">
+        <div class="kpi-grid mb-4" id="rpt-kpi-grid"></div>
+
+        <!-- Grouped table -->
+        <div id="rpt-grouped-section" class="card mb-4 hidden">
+          <div class="card-header">
+            <h3 class="card-title" id="rpt-grouped-title">Summary by Group</h3>
+          </div>
+          <div class="card-body p-0">
+            <table class="table" id="rpt-grouped-table">
+              <thead><tr id="rpt-grouped-thead"></tr></thead>
+              <tbody id="rpt-grouped-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Gains summary -->
+        <div id="rpt-gains-section" class="card mb-4 hidden">
+          <div class="card-header"><h3 class="card-title">Capital Gains</h3></div>
+          <div class="card-body p-0">
+            <table class="table" id="rpt-gains-table">
+              <thead>
+                <tr>
+                  <th>Date</th><th>Asset</th><th>Qty Disposed</th>
+                  <th>Proceeds USD</th><th>Cost Basis USD</th>
+                  <th>Fee USD</th><th>Gain / Loss</th><th>Term</th>
+                </tr>
+              </thead>
+              <tbody id="rpt-gains-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Export bar -->
+        <div class="card mb-4">
+          <div class="card-header">
+            <h3 class="card-title">Transactions <span id="rpt-count-badge" class="badge badge-secondary">0</span></h3>
+            <div class="button-row" style="margin:0;gap:.5rem">
+              <button class="btn btn-sm btn-secondary" onclick="exportReport('csv')">⬇ CSV</button>
+              <button class="btn btn-sm btn-secondary" onclick="exportReport('json')">⬇ JSON</button>
+              <button class="btn btn-sm btn-ghost" onclick="copyReportToClipboard()">📋 Copy</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div style="overflow-x:auto">
+              <table class="table" id="rpt-txn-table">
+                <thead>
+                  <tr>
+                    <th>Date</th><th>Type</th><th>Asset</th><th>Quantity</th>
+                    <th>Price USD</th><th>Total USD</th><th>Fee USD</th>
+                    <th>Wallet</th><th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody id="rpt-txn-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="rpt-empty" class="empty-state-page">
+        <div class="empty-icon">🔍</div>
+        <p>Set your filters above and click <strong>Run Report</strong></p>
       </div>
     </section>
 

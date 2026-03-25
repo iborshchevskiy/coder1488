@@ -591,6 +591,293 @@ def create_app() -> FastAPI:
         }
 
     # ---------------------------------------------------------------- #
+    # Custom Reports
+    # ---------------------------------------------------------------- #
+
+    @app.get("/api/reports/meta")
+    async def reports_meta():
+        """Return distinct wallets, assets and transaction types present in the store."""
+        store = _get_store()
+        all_txns = store.all()
+        wallets = sorted({t.wallet for t in all_txns if t.wallet})
+        assets = sorted({t.asset for t in all_txns if t.asset})
+        types = sorted({t.type.value for t in all_txns})
+        years = sorted({t.date.year for t in all_txns}, reverse=True)
+        return {"wallets": wallets, "assets": assets, "types": types, "years": years}
+
+    @app.get("/api/reports/custom")
+    async def custom_report(
+        # Filters
+        wallets: Optional[str] = Query(None, description="Comma-separated wallet names"),
+        assets: Optional[str] = Query(None, description="Comma-separated asset symbols"),
+        types: Optional[str] = Query(None, description="Comma-separated transaction types"),
+        date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+        date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+        # Options
+        include_gains: bool = Query(False),
+        group_by: Optional[str] = Query(None, description="asset|wallet|month|type"),
+        base_currency: Optional[str] = Query(None),
+        method: Optional[str] = Query(None),
+    ):
+        from datetime import date as date_cls
+        store = _get_store()
+        cfg = _get_config()
+        converter: FiatConverter = _state["converter"]
+        converter.ensure_loaded()
+        base = (base_currency or cfg.base_currency).upper()
+        if base not in SUPPORTED_FIAT:
+            raise HTTPException(400, f"Unsupported currency: {base}")
+
+        # Parse filter sets
+        wallet_set = {w.strip() for w in wallets.split(",")} if wallets else None
+        asset_set = {a.strip().upper() for a in assets.split(",")} if assets else None
+        type_set: Optional[set] = None
+        if types:
+            try:
+                type_set = {TransactionType(t.strip()) for t in types.split(",")}
+            except ValueError as e:
+                raise HTTPException(400, f"Invalid type: {e}")
+
+        # Parse date range
+        dt_from = dt_to = None
+        try:
+            if date_from:
+                from datetime import datetime as _dt
+                dt_from = _dt.strptime(date_from, "%Y-%m-%d")
+            if date_to:
+                from datetime import datetime as _dt
+                dt_to = _dt.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+        except ValueError as e:
+            raise HTTPException(400, f"Invalid date: {e}")
+
+        # Apply filters
+        txns = store.all()
+        if wallet_set:
+            txns = [t for t in txns if t.wallet in wallet_set]
+        if asset_set:
+            txns = [t for t in txns if t.asset.upper() in asset_set]
+        if type_set:
+            txns = [t for t in txns if t.type in type_set]
+        if dt_from:
+            txns = [t for t in txns if t.date >= dt_from]
+        if dt_to:
+            txns = [t for t in txns if t.date <= dt_to]
+
+        # FX helper
+        def to_base(usd_val: Optional[Decimal]) -> Optional[Decimal]:
+            if usd_val is None:
+                return None
+            if base == "USD":
+                return usd_val
+            try:
+                return usd_val * converter.get_rate("USD", base)
+            except Exception:
+                return usd_val
+
+        # Build transaction rows
+        INBOUND = {
+            TransactionType.BUY, TransactionType.RECEIVE, TransactionType.TRANSFER_IN,
+            TransactionType.MINING, TransactionType.INCOME, TransactionType.FIAT_DEPOSIT,
+        }
+        rows = []
+        total_in = Decimal("0")
+        total_out = Decimal("0")
+        total_fees = Decimal("0")
+
+        for t in txns:
+            usd = t.total_usd or Decimal("0")
+            base_val = to_base(usd) or Decimal("0")
+            fee_base = to_base(t.fee_usd) or Decimal("0")
+            is_in = t.type in INBOUND
+            if is_in:
+                total_in += base_val
+            else:
+                total_out += base_val
+            total_fees += fee_base
+            rows.append(t.to_dict())
+
+        # Grouping
+        grouped: Optional[dict] = None
+        if group_by:
+            from collections import defaultdict
+            groups: dict = defaultdict(lambda: {"count": 0, "inflow": Decimal("0"), "outflow": Decimal("0"), "fees": Decimal("0")})
+
+            def _key(t) -> str:
+                if group_by == "asset":
+                    return t.asset
+                if group_by == "wallet":
+                    return t.wallet or "(no wallet)"
+                if group_by == "type":
+                    return t.type.value
+                if group_by == "month":
+                    return t.date.strftime("%Y-%m")
+                return "all"
+
+            for t in txns:
+                k = _key(t)
+                g = groups[k]
+                g["count"] += 1
+                usd = t.total_usd or Decimal("0")
+                bv = to_base(usd) or Decimal("0")
+                if t.type in INBOUND:
+                    g["inflow"] += bv
+                else:
+                    g["outflow"] += bv
+                g["fees"] += to_base(t.fee_usd) or Decimal("0")
+
+            grouped = {
+                k: {
+                    "count": v["count"],
+                    "inflow": str(v["inflow"].quantize(Decimal("0.01"))),
+                    "outflow": str(v["outflow"].quantize(Decimal("0.01"))),
+                    "net": str((v["inflow"] - v["outflow"]).quantize(Decimal("0.01"))),
+                    "fees": str(v["fees"].quantize(Decimal("0.01"))),
+                }
+                for k, v in sorted(groups.items())
+            }
+
+        # Capital gains (optional)
+        gains_data: Optional[dict] = None
+        if include_gains:
+            cost_method = CostBasisMethod(method or cfg.cost_basis_method)
+            engine = TaxEngine(store, cost_method)
+            # Filter gains by date range / asset
+            all_gains = engine.gains()
+            filtered_gains = all_gains
+            if dt_from:
+                filtered_gains = [g for g in filtered_gains if g.disposal_date >= dt_from]
+            if dt_to:
+                filtered_gains = [g for g in filtered_gains if g.disposal_date <= dt_to]
+            if asset_set:
+                filtered_gains = [g for g in filtered_gains if g.asset.upper() in asset_set]
+
+            total_gain = sum(g.gain_loss_usd for g in filtered_gains)
+            st_gain = sum(g.gain_loss_usd for g in filtered_gains if not g.is_long_term)
+            lt_gain = sum(g.gain_loss_usd for g in filtered_gains if g.is_long_term)
+            gains_data = {
+                "records": [g.to_dict() for g in filtered_gains],
+                "summary": {
+                    "total_gain_loss_usd": str(total_gain.quantize(Decimal("0.01"))),
+                    "short_term_usd": str(st_gain.quantize(Decimal("0.01"))),
+                    "long_term_usd": str(lt_gain.quantize(Decimal("0.01"))),
+                    "count": len(filtered_gains),
+                },
+            }
+
+        return {
+            "filters": {
+                "wallets": list(wallet_set) if wallet_set else None,
+                "assets": list(asset_set) if asset_set else None,
+                "types": [t.value for t in type_set] if type_set else None,
+                "date_from": date_from,
+                "date_to": date_to,
+                "base_currency": base,
+                "group_by": group_by,
+            },
+            "transactions": rows,
+            "summary": {
+                "count": len(rows),
+                "total_inflow": str(total_in.quantize(Decimal("0.01"))),
+                "total_outflow": str(total_out.quantize(Decimal("0.01"))),
+                "net": str((total_in - total_out).quantize(Decimal("0.01"))),
+                "total_fees": str(total_fees.quantize(Decimal("0.01"))),
+                "base_currency": base,
+            },
+            "grouped": grouped,
+            "gains": gains_data,
+        }
+
+    @app.get("/api/reports/export")
+    async def export_report(
+        format: str = Query("csv", description="csv or json"),
+        wallets: Optional[str] = None,
+        assets: Optional[str] = None,
+        types: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        include_gains: bool = False,
+        group_by: Optional[str] = None,
+        base_currency: Optional[str] = None,
+        method: Optional[str] = None,
+    ):
+        """Download report as CSV or JSON file."""
+        import io
+        import csv as csv_mod
+        from fastapi.responses import StreamingResponse
+
+        # Reuse custom_report logic by calling it directly with a fake scope
+        # Build query string and forward to custom_report handler
+        data = await custom_report(
+            wallets=wallets, assets=assets, types=types,
+            date_from=date_from, date_to=date_to,
+            include_gains=include_gains, group_by=group_by,
+            base_currency=base_currency, method=method,
+        )
+
+        filename_base = f"crypto_report_{date_from or 'all'}_{date_to or 'now'}"
+
+        if format == "json":
+            import json as json_mod
+            content = json_mod.dumps(data, indent=2, default=str)
+            return StreamingResponse(
+                iter([content]),
+                media_type="application/json",
+                headers={"Content-Disposition": f'attachment; filename="{filename_base}.json"'},
+            )
+
+        # CSV export
+        buf = io.StringIO()
+        writer = csv_mod.writer(buf)
+
+        # Summary header
+        s = data["summary"]
+        writer.writerow(["=== REPORT SUMMARY ==="])
+        writer.writerow(["Transactions", s["count"]])
+        writer.writerow(["Total Inflow", s["total_inflow"], s["base_currency"]])
+        writer.writerow(["Total Outflow", s["total_outflow"], s["base_currency"]])
+        writer.writerow(["Net", s["net"], s["base_currency"]])
+        writer.writerow(["Fees", s["total_fees"], s["base_currency"]])
+        writer.writerow([])
+
+        # Grouped summary if present
+        if data.get("grouped"):
+            writer.writerow(["=== GROUPED BY", (data["filters"].get("group_by") or "").upper(), "==="])
+            writer.writerow(["Group", "Count", "Inflow", "Outflow", "Net", "Fees"])
+            for grp, vals in data["grouped"].items():
+                writer.writerow([grp, vals["count"], vals["inflow"], vals["outflow"], vals["net"], vals["fees"]])
+            writer.writerow([])
+
+        # Gains if present
+        if data.get("gains"):
+            gs = data["gains"]["summary"]
+            writer.writerow(["=== CAPITAL GAINS ==="])
+            writer.writerow(["Total Gain/Loss USD", gs["total_gain_loss_usd"]])
+            writer.writerow(["Short-Term", gs["short_term_usd"]])
+            writer.writerow(["Long-Term", gs["long_term_usd"]])
+            writer.writerow([])
+            if data["gains"]["records"]:
+                g_fields = list(data["gains"]["records"][0].keys())
+                writer.writerow(g_fields)
+                for g in data["gains"]["records"]:
+                    writer.writerow([g.get(f, "") for f in g_fields])
+                writer.writerow([])
+
+        # Transactions
+        writer.writerow(["=== TRANSACTIONS ==="])
+        if data["transactions"]:
+            fields = list(data["transactions"][0].keys())
+            writer.writerow(fields)
+            for t in data["transactions"]:
+                writer.writerow([t.get(f, "") for f in fields])
+
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename_base}.csv"'},
+        )
+
+    # ---------------------------------------------------------------- #
     # Telegram – Webhook receiver
     # ---------------------------------------------------------------- #
 

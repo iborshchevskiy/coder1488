@@ -87,28 +87,30 @@ function navigate(page) {
 }
 
 const pageTitles = {
-  dashboard:    "Dashboard",
-  portfolio:    "Portfolio",
-  transactions: "Transactions",
-  gains:        "Capital Gains",
-  income:       "Income",
-  import:       "Import",
-  fiat:         "Fiat Accounts",
-  exchange:     "Exchange Rates",
-  settings:     "Settings",
-  telegram:     "Telegram Bot",
+  dashboard:        "Dashboard",
+  portfolio:        "Portfolio",
+  transactions:     "Transactions",
+  gains:            "Capital Gains",
+  income:           "Income",
+  import:           "Import",
+  fiat:             "Fiat Accounts",
+  exchange:         "Exchange Rates",
+  settings:         "Settings",
+  telegram:         "Telegram Bot",
+  "report-builder": "Custom Report",
 };
 
 const pageLoaders = {
-  dashboard:    loadDashboard,
-  portfolio:    loadPortfolio,
-  transactions: loadTransactions,
-  gains:        loadGains,
-  income:       loadIncome,
-  fiat:         loadFiatAccounts,
-  exchange:     loadExchangeRates,
-  settings:     loadSettings,
-  telegram:     loadTelegramPage,
+  dashboard:        loadDashboard,
+  portfolio:        loadPortfolio,
+  transactions:     loadTransactions,
+  gains:            loadGains,
+  income:           loadIncome,
+  fiat:             loadFiatAccounts,
+  exchange:         loadExchangeRates,
+  settings:         loadSettings,
+  telegram:         loadTelegramPage,
+  "report-builder": loadReportBuilder,
 };
 
 // ============================================================
@@ -1041,4 +1043,310 @@ function tgBanner(msg, type = "success") {
   el.className = `alert alert-${type}`;
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 5000);
+}
+
+// ============================================================
+// Custom Report Builder
+// ============================================================
+
+const _rpt = {
+  meta: null,       // {wallets, assets, types, years}
+  lastResult: null, // last API response
+};
+
+async function loadReportBuilder() {
+  try {
+    _rpt.meta = await api.get("/reports/meta");
+    _renderMultiselect("rpt-wallets-container", _rpt.meta.wallets, "rpt-wallet");
+    _renderMultiselect("rpt-assets-container",  _rpt.meta.assets,  "rpt-asset");
+    _renderTypeTags("rpt-types-container", _rpt.meta.types);
+  } catch (e) {
+    toast(`Failed to load report metadata: ${e.message}`, "error");
+  }
+}
+
+// ── Multi-select helpers ──────────────────────────────────────
+
+function _renderMultiselect(containerId, items, checkboxClass) {
+  const box = document.getElementById(containerId);
+  if (!items || items.length === 0) {
+    box.innerHTML = '<span class="multiselect-placeholder">No data yet</span>';
+    return;
+  }
+  box.innerHTML = items.map(item => `
+    <label class="multiselect-item">
+      <input type="checkbox" class="${checkboxClass}" value="${item}">
+      <span>${item}</span>
+    </label>
+  `).join("");
+}
+
+function _renderTypeTags(containerId, types) {
+  const box = document.getElementById(containerId);
+  if (!types || types.length === 0) {
+    box.innerHTML = '<span class="multiselect-placeholder">No data yet</span>';
+    return;
+  }
+  const TYPE_COLORS = {
+    buy: "tag-green", sell: "tag-red", receive: "tag-blue", send: "tag-orange",
+    transfer_in: "tag-blue", transfer_out: "tag-orange", mining: "tag-purple",
+    income: "tag-green", swap: "tag-yellow", fee: "tag-red",
+    fiat_deposit: "tag-teal", fiat_withdrawal: "tag-red",
+  };
+  box.innerHTML = types.map(t => `
+    <label class="tag-checkbox ${TYPE_COLORS[t] || ''}">
+      <input type="checkbox" class="rpt-type" value="${t}" style="display:none">
+      <span>${t.replace(/_/g, " ")}</span>
+    </label>
+  `).join("");
+  // Toggle visual state on click
+  box.querySelectorAll(".tag-checkbox").forEach(lbl => {
+    lbl.addEventListener("click", () => {
+      const cb = lbl.querySelector("input");
+      cb.checked = !cb.checked;
+      lbl.classList.toggle("tag-selected", cb.checked);
+    });
+  });
+}
+
+function _getChecked(cls) {
+  return [...document.querySelectorAll(`.${cls}:checked`)].map(el => el.value);
+}
+
+// ── Quick date ranges ─────────────────────────────────────────
+
+function applyQuickRange(val) {
+  const from = document.getElementById("rpt-date-from");
+  const to   = document.getElementById("rpt-date-to");
+  const now  = new Date();
+  const pad  = n => String(n).padStart(2, "0");
+  const fmt  = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+  from.value = "";
+  to.value   = "";
+
+  if (val === "all" || val === "") { return; }
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  to.value = fmt(today);
+
+  if (val === "last_30") {
+    const d = new Date(today); d.setDate(d.getDate() - 30);
+    from.value = fmt(d);
+  } else if (val === "last_month") {
+    const d = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    from.value = fmt(d);
+    to.value   = fmt(new Date(today.getFullYear(), today.getMonth(), 0));
+  } else if (val === "last_quarter") {
+    const q = Math.floor(today.getMonth() / 3);
+    const d = new Date(today.getFullYear(), (q - 1) * 3, 1);
+    from.value = fmt(d);
+    to.value   = fmt(new Date(today.getFullYear(), q * 3, 0));
+  } else if (val === "last_year") {
+    from.value = `${today.getFullYear() - 1}-01-01`;
+    to.value   = `${today.getFullYear() - 1}-12-31`;
+  } else if (val === "ytd") {
+    from.value = `${today.getFullYear()}-01-01`;
+  }
+}
+
+// ── Run report ────────────────────────────────────────────────
+
+async function runReport() {
+  const wallets = _getChecked("rpt-wallet");
+  const assets  = _getChecked("rpt-asset");
+  const types   = _getChecked("rpt-type");
+  const dateFrom = document.getElementById("rpt-date-from").value;
+  const dateTo   = document.getElementById("rpt-date-to").value;
+  const groupBy  = document.getElementById("rpt-group-by").value;
+  const currency = document.getElementById("rpt-currency").value;
+  const method   = document.getElementById("rpt-method").value;
+  const incGains = document.getElementById("rpt-include-gains").checked;
+
+  const params = new URLSearchParams();
+  if (wallets.length)  params.set("wallets",  wallets.join(","));
+  if (assets.length)   params.set("assets",   assets.join(","));
+  if (types.length)    params.set("types",    types.join(","));
+  if (dateFrom)        params.set("date_from", dateFrom);
+  if (dateTo)          params.set("date_to",   dateTo);
+  if (groupBy)         params.set("group_by",  groupBy);
+  if (currency)        params.set("base_currency", currency);
+  if (method)          params.set("method",    method);
+  if (incGains)        params.set("include_gains", "true");
+
+  try {
+    const data = await api.get(`/reports/custom?${params}`);
+    _rpt.lastResult = data;
+    _rpt.lastParams = params.toString();
+    _renderReport(data);
+  } catch (e) {
+    toast(`Report error: ${e.message}`, "error");
+  }
+}
+
+function _renderReport(data) {
+  document.getElementById("rpt-empty").classList.add("hidden");
+  document.getElementById("rpt-summary").classList.remove("hidden");
+
+  const s = data.summary;
+  const cur = s.base_currency;
+
+  // KPI cards
+  document.getElementById("rpt-kpi-grid").innerHTML = `
+    <div class="kpi-card">
+      <div class="kpi-label">Transactions</div>
+      <div class="kpi-value">${s.count.toLocaleString()}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Inflow</div>
+      <div class="kpi-value" style="color:var(--clr-success)">${fmtMoney(s.total_inflow)} ${cur}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Outflow</div>
+      <div class="kpi-value" style="color:var(--clr-danger)">${fmtMoney(s.total_outflow)} ${cur}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Net</div>
+      <div class="kpi-value" style="color:${parseFloat(s.net)>=0?'var(--clr-success)':'var(--clr-danger)'}">${fmtMoney(s.net)} ${cur}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Total Fees</div>
+      <div class="kpi-value">${fmtMoney(s.total_fees)} ${cur}</div>
+    </div>
+  `;
+
+  // Grouped table
+  const grpSection = document.getElementById("rpt-grouped-section");
+  if (data.grouped) {
+    grpSection.classList.remove("hidden");
+    const groupLabel = document.getElementById("rpt-group-by").options[document.getElementById("rpt-group-by").selectedIndex].text;
+    document.getElementById("rpt-grouped-title").textContent = `Summary by ${groupLabel}`;
+    document.getElementById("rpt-grouped-thead").innerHTML =
+      `<th>${groupLabel}</th><th>Count</th><th>Inflow ${cur}</th><th>Outflow ${cur}</th><th>Net ${cur}</th><th>Fees ${cur}</th>`;
+    document.getElementById("rpt-grouped-tbody").innerHTML = Object.entries(data.grouped).map(([k, v]) => `
+      <tr>
+        <td><strong>${k}</strong></td>
+        <td>${v.count}</td>
+        <td class="fiat-inflow">${fmtMoney(v.inflow)}</td>
+        <td class="fiat-outflow">${fmtMoney(v.outflow)}</td>
+        <td class="${parseFloat(v.net)>=0?'fiat-inflow':'fiat-outflow'}">${fmtMoney(v.net)}</td>
+        <td>${fmtMoney(v.fees)}</td>
+      </tr>
+    `).join("");
+  } else {
+    grpSection.classList.add("hidden");
+  }
+
+  // Gains table
+  const gainsSection = document.getElementById("rpt-gains-section");
+  if (data.gains && data.gains.records.length) {
+    gainsSection.classList.remove("hidden");
+    const gs = data.gains.summary;
+    const sign = v => parseFloat(v) >= 0 ? "+" : "";
+    document.getElementById("rpt-gains-tbody").innerHTML = [
+      `<tr class="table-subheader">
+        <td colspan="6"><strong>Summary</strong></td>
+        <td class="${parseFloat(gs.total_gain_loss_usd)>=0?'fiat-inflow':'fiat-outflow'}">
+          ${sign(gs.total_gain_loss_usd)}${fmtMoney(gs.total_gain_loss_usd)} USD</td>
+        <td>ST: ${fmtMoney(gs.short_term_usd)} / LT: ${fmtMoney(gs.long_term_usd)}</td>
+      </tr>`,
+      ...data.gains.records.map(g => `
+        <tr>
+          <td>${g.disposal_date ? g.disposal_date.slice(0,10) : "—"}</td>
+          <td>${g.asset}</td>
+          <td>${fmtNum(g.quantity_disposed)}</td>
+          <td>${fmtMoney(g.proceeds_usd)}</td>
+          <td>${fmtMoney(g.cost_basis_usd)}</td>
+          <td>${fmtMoney(g.fee_usd || 0)}</td>
+          <td class="${parseFloat(g.gain_loss_usd)>=0?'fiat-inflow':'fiat-outflow'}">
+            ${sign(g.gain_loss_usd)}${fmtMoney(g.gain_loss_usd)}</td>
+          <td><span class="badge ${g.is_long_term?'badge-success':'badge-warning'}">${g.is_long_term?"Long":"Short"}</span></td>
+        </tr>
+      `)
+    ].join("");
+  } else {
+    gainsSection.classList.add("hidden");
+  }
+
+  // Transaction table
+  const txns = data.transactions;
+  document.getElementById("rpt-count-badge").textContent = txns.length;
+  document.getElementById("rpt-txn-tbody").innerHTML = txns.length === 0
+    ? '<tr><td colspan="9" class="empty-state">No transactions match these filters</td></tr>'
+    : txns.map(t => `
+      <tr>
+        <td>${t.date ? t.date.slice(0,16).replace("T"," ") : "—"}</td>
+        <td><span class="badge badge-type badge-${t.type}">${t.type}</span></td>
+        <td><strong>${t.asset}</strong></td>
+        <td class="mono">${fmtNum(t.quantity)}</td>
+        <td class="mono">${t.price_usd ? "$"+fmtMoney(t.price_usd) : "—"}</td>
+        <td class="mono">${t.total_usd ? "$"+fmtMoney(t.total_usd) : "—"}</td>
+        <td class="mono">${t.fee_usd ? "$"+fmtMoney(t.fee_usd) : "—"}</td>
+        <td>${t.wallet || "—"}</td>
+        <td class="text-muted">${t.notes || ""}</td>
+      </tr>
+    `).join("");
+}
+
+// ── Export ────────────────────────────────────────────────────
+
+function exportReport(format) {
+  if (!_rpt.lastParams) { toast("Run a report first.", "error"); return; }
+  const url = `/api/reports/export?format=${format}&${_rpt.lastParams}`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function copyReportToClipboard() {
+  if (!_rpt.lastResult) { toast("Run a report first.", "error"); return; }
+  const data = _rpt.lastResult;
+  const lines = [];
+  const s = data.summary;
+  lines.push(`Custom Report — ${new Date().toISOString().slice(0,10)}`);
+  lines.push(`Transactions: ${s.count}  |  Inflow: ${s.total_inflow} ${s.base_currency}  |  Outflow: ${s.total_outflow}  |  Net: ${s.net}  |  Fees: ${s.total_fees}`);
+  lines.push("");
+  if (data.transactions.length) {
+    lines.push(["Date","Type","Asset","Quantity","Price USD","Total USD","Fee USD","Wallet"].join("\t"));
+    data.transactions.forEach(t => lines.push([
+      t.date?.slice(0,16), t.type, t.asset, t.quantity,
+      t.price_usd || "", t.total_usd || "", t.fee_usd || "", t.wallet || ""
+    ].join("\t")));
+  }
+  navigator.clipboard.writeText(lines.join("\n"))
+    .then(() => toast("Copied to clipboard!", "success"))
+    .catch(() => toast("Copy failed — try the CSV export instead.", "error"));
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+
+function resetReportFilters() {
+  document.getElementById("rpt-date-from").value = "";
+  document.getElementById("rpt-date-to").value   = "";
+  document.getElementById("rpt-quick-range").value = "";
+  document.getElementById("rpt-group-by").value  = "";
+  document.getElementById("rpt-currency").value  = "";
+  document.getElementById("rpt-method").value    = "";
+  document.getElementById("rpt-include-gains").checked = false;
+  document.querySelectorAll(".rpt-wallet, .rpt-asset, .rpt-type").forEach(el => {
+    el.checked = false;
+    el.closest("label")?.classList.remove("tag-selected");
+  });
+  document.getElementById("rpt-summary").classList.add("hidden");
+  document.getElementById("rpt-empty").classList.remove("hidden");
+  _rpt.lastResult = null;
+}
+
+function fmtMoney(v) {
+  const n = parseFloat(v) || 0;
+  return Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtNum(v) {
+  const n = parseFloat(v) || 0;
+  if (Math.abs(n) < 0.0001) return n.toExponential(4);
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 });
 }
