@@ -4,9 +4,11 @@ from .portfolio import Portfolio, HoldingSnapshot
 from .fiat_converter import FiatConverter
 from .wallet_importer import WalletImporter
 from .blockchain_importer import BlockchainImporter
+from .fiat_account import FiatAccountTracker, FiatAccount, FiatEntry
 
 __all__ = [
     "TransactionStore", "TaxEngine", "CostBasisMethod", "GainRecord",
     "Portfolio", "HoldingSnapshot", "FiatConverter",
     "WalletImporter", "BlockchainImporter",
+    "FiatAccountTracker", "FiatAccount", "FiatEntry",
 ]

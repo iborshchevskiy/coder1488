@@ -141,6 +141,10 @@ class TaxEngine:
     # ------------------------------------------------------------------ #
 
     def _process(self, txn: Transaction) -> None:
+        # Pure fiat movements are never taxable crypto events
+        if txn.is_fiat_only:
+            return
+
         asset = txn.asset.upper()
 
         if txn.is_acquisition:
@@ -166,6 +170,7 @@ class TaxEngine:
             self._lots.setdefault(recv_asset, []).append(lot)
 
     def _open_lot(self, asset: str, txn: Transaction) -> None:
+        # cost_basis_usd already incorporates fiat_amount * fx_rate_to_usd via __post_init__
         basis = txn.cost_basis_usd or Decimal("0")
         lot = Lot(
             asset=asset,
@@ -224,7 +229,11 @@ class TaxEngine:
         else:
             is_long_term = False
 
-        proceeds = txn.total_usd or Decimal("0")
+        # Proceeds: prefer total_usd; derive from fiat_amount * fx_rate when available
+        proceeds = txn.total_usd
+        if proceeds is None and txn.fiat_amount is not None and txn.fx_rate_to_usd is not None:
+            proceeds = (txn.fiat_amount * txn.fx_rate_to_usd).quantize(Decimal("0.01"))
+        proceeds = proceeds or Decimal("0")
         fee = txn.fee_usd or Decimal("0")
         gain = proceeds - total_basis - fee
 

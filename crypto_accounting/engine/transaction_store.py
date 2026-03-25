@@ -17,6 +17,7 @@ from ..models.transaction import Transaction, TransactionType
 _CSV_FIELDS = [
     "id", "type", "date", "asset", "quantity",
     "price_usd", "total_usd", "fee_usd", "fee_asset", "fee_quantity",
+    "fiat_currency", "fiat_amount", "fx_rate_to_usd",
     "swap_asset", "swap_quantity", "wallet", "notes", "tx_hash",
 ]
 

@@ -46,6 +46,11 @@
       <span class="nav-icon">💰</span> Income
     </button>
 
+    <div class="nav-section-label">Fiat</div>
+    <button class="nav-item" data-page="fiat">
+      <span class="nav-icon">🏦</span> Fiat Accounts
+    </button>
+
     <div class="nav-section-label">Utilities</div>
     <button class="nav-item" data-page="exchange">
       <span class="nav-icon">💱</span> Exchange Rates
@@ -96,6 +101,11 @@
           <div class="kpi-label">Realised Gain/Loss</div>
           <div class="kpi-value" id="kpi-gain-loss">—</div>
           <div class="kpi-sub">all years</div>
+        </div>
+        <div class="kpi-card blue">
+          <div class="kpi-label">Fiat Balance</div>
+          <div class="kpi-value" id="kpi-fiat-balance">—</div>
+          <div class="kpi-sub" id="kpi-fiat-sub">across all accounts</div>
         </div>
         <div class="kpi-card blue">
           <div class="kpi-label">Transactions</div>
@@ -186,17 +196,25 @@
         </div>
         <div class="field">
           <label for="tx-filter-type">Type</label>
-          <select id="tx-filter-type" style="width:140px">
+          <select id="tx-filter-type" style="width:160px">
             <option value="">All types</option>
-            <option value="buy">Buy</option>
-            <option value="sell">Sell</option>
-            <option value="receive">Receive</option>
-            <option value="send">Send</option>
-            <option value="swap">Swap</option>
-            <option value="mining">Mining</option>
-            <option value="income">Income</option>
-            <option value="transfer_in">Transfer In</option>
-            <option value="transfer_out">Transfer Out</option>
+            <optgroup label="Crypto ↔ Fiat">
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+            </optgroup>
+            <optgroup label="Fiat Cash">
+              <option value="fiat_deposit">Fiat Deposit</option>
+              <option value="fiat_withdrawal">Fiat Withdrawal</option>
+            </optgroup>
+            <optgroup label="Crypto">
+              <option value="receive">Receive</option>
+              <option value="send">Send</option>
+              <option value="swap">Swap</option>
+              <option value="mining">Mining</option>
+              <option value="income">Income</option>
+              <option value="transfer_in">Transfer In</option>
+              <option value="transfer_out">Transfer Out</option>
+            </optgroup>
           </select>
         </div>
         <div class="field">
@@ -652,6 +670,79 @@
       </div>
     </section>
 
+    <!-- ======================== FIAT ACCOUNTS ======================== -->
+    <section class="page" id="page-fiat">
+      <!-- Summary cards -->
+      <div id="fiat-accounts-grid" class="kpi-grid section-gap">
+        <div class="kpi-card"><div class="kpi-label">Loading…</div></div>
+      </div>
+
+      <!-- Per-currency detail -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Fiat Account Detail</span>
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <select id="fiat-currency-select" style="font-size:.875rem;padding:.3rem .6rem;border-radius:var(--radius);border:1px solid var(--clr-border);">
+              <option value="">Select currency…</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="loadFiatLedger()">View Ledger</button>
+          </div>
+        </div>
+
+        <!-- Stats row -->
+        <div id="fiat-detail-stats" style="display:none; padding:1rem 1.25rem; border-bottom:1px solid var(--clr-border);">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;">
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Current Balance</div>
+              <div id="fiat-stat-balance" style="font-size:1.3rem;font-weight:700;margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Total Deposited</div>
+              <div id="fiat-stat-deposited" style="font-size:1.1rem;font-weight:600;color:var(--clr-green);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Total Withdrawn</div>
+              <div id="fiat-stat-withdrawn" style="font-size:1.1rem;font-weight:600;color:var(--clr-text-muted);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Spent on Buys</div>
+              <div id="fiat-stat-spent" style="font-size:1.1rem;font-weight:600;color:var(--clr-red);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Received from Sells</div>
+              <div id="fiat-stat-received" style="font-size:1.1rem;font-weight:600;color:var(--clr-green);margin-top:.2rem">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-text-muted)">Fiat P&amp;L (Sells − Buys)</div>
+              <div id="fiat-stat-pnl" style="font-size:1.1rem;font-weight:600;margin-top:.2rem">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledger table -->
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Asset</th>
+                <th class="text-right">Crypto Qty</th>
+                <th class="text-right">Fiat Amount</th>
+                <th class="text-right">USD Equiv.</th>
+                <th class="text-right">Running Balance</th>
+                <th>Wallet</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="fiat-ledger-body">
+              <tr><td colspan="9" class="empty-state">Select a currency above to view its ledger.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -669,16 +760,24 @@
         <div class="form-grid">
           <div class="field">
             <label for="txn-type">Type *</label>
-            <select id="txn-type" name="type" required>
-              <option value="buy">Buy</option>
-              <option value="sell">Sell</option>
-              <option value="receive">Receive</option>
-              <option value="send">Send</option>
-              <option value="swap">Swap</option>
-              <option value="mining">Mining</option>
-              <option value="income">Income</option>
-              <option value="transfer_in">Transfer In</option>
-              <option value="transfer_out">Transfer Out</option>
+            <select id="txn-type" name="type" required onchange="onTxnTypeChange(this.value)">
+              <optgroup label="Crypto ↔ Fiat">
+                <option value="buy">Buy (fiat → crypto)</option>
+                <option value="sell">Sell (crypto → fiat)</option>
+              </optgroup>
+              <optgroup label="Fiat Cash">
+                <option value="fiat_deposit">Fiat Deposit</option>
+                <option value="fiat_withdrawal">Fiat Withdrawal</option>
+              </optgroup>
+              <optgroup label="Crypto">
+                <option value="receive">Receive (gift / airdrop)</option>
+                <option value="send">Send (gift / donation)</option>
+                <option value="swap">Swap (crypto ↔ crypto)</option>
+                <option value="mining">Mining / Staking</option>
+                <option value="income">Income</option>
+                <option value="transfer_in">Transfer In</option>
+                <option value="transfer_out">Transfer Out</option>
+              </optgroup>
             </select>
           </div>
           <div class="field">
@@ -705,6 +804,54 @@
             <label for="txn-fee">Fee (USD)</label>
             <input id="txn-fee" name="fee_usd" type="number" step="any" placeholder="2.50" min="0" />
           </div>
+
+          <!-- Fiat section — shown for buy / sell / fiat_deposit / fiat_withdrawal -->
+          <div id="fiat-fields" style="display:contents">
+            <div class="field" style="grid-column:1/-1">
+              <div style="font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--clr-accent);padding:.4rem 0 .2rem;border-top:1px solid var(--clr-border);margin-top:.25rem;">
+                Fiat Side
+              </div>
+            </div>
+            <div class="field">
+              <label for="txn-fiat-currency">Fiat Currency</label>
+              <select id="txn-fiat-currency" name="fiat_currency">
+                <option value="">— none —</option>
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="GBP">GBP</option>
+                <option value="JPY">JPY</option>
+                <option value="CAD">CAD</option>
+                <option value="AUD">AUD</option>
+                <option value="CHF">CHF</option>
+                <option value="CNY">CNY</option>
+                <option value="SEK">SEK</option>
+                <option value="NOK">NOK</option>
+                <option value="DKK">DKK</option>
+                <option value="SGD">SGD</option>
+                <option value="HKD">HKD</option>
+                <option value="KRW">KRW</option>
+                <option value="BRL">BRL</option>
+                <option value="INR">INR</option>
+                <option value="PLN">PLN</option>
+                <option value="ZAR">ZAR</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="txn-fiat-amount">
+                Fiat Amount
+                <span id="txn-fiat-amount-hint" style="font-weight:400;color:var(--clr-text-muted);">(spent on buy / received from sell)</span>
+              </label>
+              <input id="txn-fiat-amount" name="fiat_amount" type="number" step="any" placeholder="23000" min="0" />
+            </div>
+            <div class="field">
+              <label for="txn-fx-rate">
+                FX Rate to USD
+                <span style="font-weight:400;color:var(--clr-text-muted);">(1 fiat = ? USD)</span>
+              </label>
+              <input id="txn-fx-rate" name="fx_rate_to_usd" type="number" step="any" placeholder="1.09 for EUR" min="0" />
+            </div>
+          </div>
+
           <div class="field">
             <label for="txn-wallet">Wallet / Exchange</label>
             <input id="txn-wallet" name="wallet" type="text" placeholder="Coinbase" />

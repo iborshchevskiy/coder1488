@@ -281,9 +281,15 @@ tbody tr:hover { background: var(--clr-bg); }
 .badge-mining    { background: #f5f3ff; color: var(--clr-purple); }
 .badge-income    { background: #f5f3ff; color: var(--clr-purple); }
 .badge-swap      { background: var(--clr-yellow-lt); color: var(--clr-yellow); }
-.badge-transfer-in  { background: var(--clr-accent-lt); color: var(--clr-accent); }
-.badge-transfer-out { background: var(--clr-border);    color: var(--clr-text-muted); }
-.badge-default   { background: var(--clr-surface-2);  color: var(--clr-text-muted); }
+.badge-transfer-in      { background: var(--clr-accent-lt); color: var(--clr-accent); }
+.badge-transfer-out     { background: var(--clr-border);    color: var(--clr-text-muted); }
+.badge-fiat-deposit     { background: var(--clr-green-lt);  color: var(--clr-green); }
+.badge-fiat-withdrawal  { background: var(--clr-red-lt);    color: var(--clr-red); }
+.badge-default          { background: var(--clr-surface-2); color: var(--clr-text-muted); }
+
+/* Fiat ledger amount colours */
+.fiat-inflow  { color: var(--clr-green); font-weight: 500; }
+.fiat-outflow { color: var(--clr-red);   font-weight: 500; }
 
 .pnl-positive { color: var(--clr-green); font-weight: 500; }
 .pnl-negative { color: var(--clr-red);   font-weight: 500; }

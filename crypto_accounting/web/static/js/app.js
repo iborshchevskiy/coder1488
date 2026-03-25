@@ -93,6 +93,7 @@ const pageTitles = {
   gains:        "Capital Gains",
   income:       "Income",
   import:       "Import",
+  fiat:         "Fiat Accounts",
   exchange:     "Exchange Rates",
   settings:     "Settings",
 };
@@ -103,6 +104,7 @@ const pageLoaders = {
   transactions: loadTransactions,
   gains:        loadGains,
   income:       loadIncome,
+  fiat:         loadFiatAccounts,
   exchange:     loadExchangeRates,
   settings:     loadSettings,
 };
@@ -149,13 +151,22 @@ function badgeHtml(type) {
 
 async function loadDashboard() {
   try {
-    const [portfolio, summary, fx] = await Promise.all([
+    const [portfolio, summary, fx, fiatData] = await Promise.all([
       api.get("/portfolio"),
       api.get("/summary"),
       api.get("/fx/rates").catch(() => null),
+      api.get("/fiat-accounts").catch(() => null),
     ]);
     state.portfolio = portfolio;
     state.fxRates = fx;
+
+    if (fiatData) {
+      const sym = fiatData.base_symbol || fiatData.base_currency || "$";
+      const bal = +fiatData.total_balance_base || 0;
+      document.getElementById("kpi-fiat-balance").textContent = fmt.usd(bal);
+      document.getElementById("kpi-fiat-sub").textContent =
+        `${(fiatData.accounts || []).length} currencies in base (${fiatData.base_currency})`;
+    }
 
     const holdings = portfolio.holdings || [];
     const gains = summary.gains || {};
@@ -637,6 +648,175 @@ async function saveSettings(e) {
     document.getElementById("topbar-currency").textContent = body.base_currency;
   } catch (e) {
     toast("Save failed: " + e.message, "error");
+  }
+}
+
+// ============================================================
+// Fiat Accounts
+// ============================================================
+
+async function loadFiatAccounts() {
+  try {
+    const data = await api.get("/fiat-accounts");
+    const accounts = data.accounts || [];
+
+    // Render KPI summary cards
+    const grid = document.getElementById("fiat-accounts-grid");
+    if (!accounts.length) {
+      grid.innerHTML = `<div class="kpi-card"><div class="kpi-label">No fiat accounts</div>
+        <div class="kpi-value" style="font-size:1rem;color:var(--clr-text-muted)">
+          Record buy/sell/deposit transactions with a fiat currency to see balances.
+        </div></div>`;
+    } else {
+      grid.innerHTML = accounts.map(acc => {
+        const bal = +acc.balance;
+        const cls = bal >= 0 ? "" : "red";
+        const sym = acc.symbol || acc.currency;
+        return `
+          <div class="kpi-card ${cls}" style="cursor:pointer" onclick="selectFiatCurrency('${acc.currency}')">
+            <div class="kpi-label">${acc.currency}</div>
+            <div class="kpi-value" style="font-size:1.4rem">${sym}${Math.abs(bal).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+            <div class="kpi-sub">${acc.num_buys} buys · ${acc.num_sells} sells</div>
+          </div>`;
+      }).join("") + `
+        <div class="kpi-card blue">
+          <div class="kpi-label">Total (${data.base_currency})</div>
+          <div class="kpi-value" style="font-size:1.4rem">${fmt.usd(data.total_balance_base)}</div>
+          <div class="kpi-sub">converted to base currency</div>
+        </div>`;
+    }
+
+    // Populate currency selector
+    const sel = document.getElementById("fiat-currency-select");
+    sel.innerHTML = `<option value="">Select currency…</option>`;
+    accounts.forEach(acc => {
+      const opt = document.createElement("option");
+      opt.value = acc.currency;
+      opt.textContent = `${acc.currency} (bal: ${acc.symbol || acc.currency}${acc.balance})`;
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    toast("Fiat accounts load failed: " + e.message, "error");
+  }
+}
+
+function selectFiatCurrency(currency) {
+  document.getElementById("fiat-currency-select").value = currency;
+  loadFiatLedger();
+}
+
+async function loadFiatLedger() {
+  const currency = document.getElementById("fiat-currency-select").value;
+  const tbody = document.getElementById("fiat-ledger-body");
+  const statsEl = document.getElementById("fiat-detail-stats");
+
+  if (!currency) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Select a currency above.</td></tr>`;
+    statsEl.style.display = "none";
+    return;
+  }
+
+  tbody.innerHTML = `<tr><td colspan="9"><span class="spinner"></span></td></tr>`;
+
+  try {
+    const data = await api.get(`/fiat-accounts/${currency}`);
+    const acc = data.account;
+    const sym = data.symbol || currency;
+
+    // Stats
+    statsEl.style.display = "block";
+    const bal = +acc.balance;
+    document.getElementById("fiat-stat-balance").textContent =
+      `${sym}${Math.abs(bal).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    document.getElementById("fiat-stat-balance").className =
+      bal >= 0 ? "pnl-positive" : "pnl-negative";
+    document.getElementById("fiat-stat-deposited").textContent  = `${sym}${fmtFiat(acc.total_deposited)}`;
+    document.getElementById("fiat-stat-withdrawn").textContent  = `${sym}${fmtFiat(acc.total_withdrawn)}`;
+    document.getElementById("fiat-stat-spent").textContent      = `${sym}${fmtFiat(acc.total_spent_on_buys)}`;
+    document.getElementById("fiat-stat-received").textContent   = `${sym}${fmtFiat(acc.total_received_from_sells)}`;
+    const pnl = +acc.realised_fiat_pnl;
+    document.getElementById("fiat-stat-pnl").textContent =
+      `${pnl >= 0 ? "+" : ""}${sym}${fmtFiat(acc.realised_fiat_pnl)}`;
+    document.getElementById("fiat-stat-pnl").className =
+      `kpi-value ${pnl >= 0 ? "pnl-positive" : "pnl-negative"}`;
+
+    // Ledger
+    const entries = data.ledger || [];
+    if (!entries.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-state">No entries for ${currency}.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = [...entries].reverse().map(e => {
+      const amt = +e.amount;
+      const cls = amt >= 0 ? "fiat-inflow" : "fiat-outflow";
+      const sign = amt >= 0 ? "+" : "";
+      const amtUsd = e.amount_usd ? fmt.usd(e.amount_usd) : "—";
+      const qty = +e.crypto_quantity;
+      const qtyStr = qty !== 0 ? fmt.qty(qty) : "—";
+      return `
+        <tr>
+          <td>${fmt.date(e.date)}</td>
+          <td>${badgeHtml(e.type)}</td>
+          <td>${e.asset !== "FIAT" ? `<strong>${e.asset}</strong>` : "—"}</td>
+          <td class="text-right text-mono">${qtyStr}</td>
+          <td class="text-right text-mono ${cls}">${sign}${sym}${fmtFiat(e.amount)}</td>
+          <td class="text-right">${amtUsd}</td>
+          <td class="text-right text-mono">${sym}${fmtFiat(e.running_balance)}</td>
+          <td>${e.wallet || "—"}</td>
+          <td style="color:var(--clr-text-muted);font-size:.82rem">${e.notes || ""}</td>
+        </tr>`;
+    }).join("");
+  } catch (e) {
+    toast("Fiat ledger load failed: " + e.message, "error");
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state">Failed to load.</td></tr>`;
+  }
+}
+
+function fmtFiat(v) {
+  const n = +v;
+  if (isNaN(n)) return "—";
+  return Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ============================================================
+// Transaction modal – fiat field visibility
+// ============================================================
+
+const FIAT_TYPES = new Set(["buy", "sell", "fiat_deposit", "fiat_withdrawal"]);
+
+function onTxnTypeChange(type) {
+  const section = document.getElementById("fiat-fields");
+  const hint = document.getElementById("txn-fiat-amount-hint");
+  const assetField = document.getElementById("txn-asset").closest(".field");
+  const qtyField   = document.getElementById("txn-quantity").closest(".field");
+
+  if (FIAT_TYPES.has(type)) {
+    section.style.display = "contents";
+    if (hint) {
+      hint.textContent = type === "buy"
+        ? "(fiat spent on this purchase)"
+        : type === "sell"
+        ? "(fiat received from this sale)"
+        : "(amount moved)";
+    }
+  } else {
+    section.style.display = "none";
+  }
+
+  // For pure fiat moves: asset is "FIAT", qty is 0 — pre-fill and hide
+  if (type === "fiat_deposit" || type === "fiat_withdrawal") {
+    document.getElementById("txn-asset").value = "FIAT";
+    document.getElementById("txn-quantity").value = "0";
+    assetField.style.display = "none";
+    qtyField.style.display   = "none";
+  } else {
+    assetField.style.display = "";
+    qtyField.style.display   = "";
+    if (document.getElementById("txn-asset").value === "FIAT") {
+      document.getElementById("txn-asset").value = "";
+      document.getElementById("txn-quantity").value = "";
+    }
   }
 }
 

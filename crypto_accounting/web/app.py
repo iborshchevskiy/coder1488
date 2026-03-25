@@ -3,24 +3,27 @@ FastAPI application – REST API backend for the Crypto Accounting System.
 
 Endpoints
 ---------
-GET  /api/config                    – get system config
-PUT  /api/config                    – update config
-GET  /api/fx/rates                  – current FX rates relative to base currency
-GET  /api/portfolio                 – current holdings
-GET  /api/transactions              – list all transactions (filterable)
-POST /api/transactions              – add a transaction
-DELETE /api/transactions/{id}       – remove a transaction
-POST /api/import/csv                – upload + auto-detect exchange CSV
-POST /api/import/coinbase           – Coinbase CSV
-POST /api/import/binance            – Binance CSV
-POST /api/import/kraken             – Kraken CSV
-POST /api/import/generic            – generic CSV with column map
-POST /api/import/blockchain/tron    – import from Tron address
-POST /api/import/blockchain/eth     – import from Ethereum address
-POST /api/import/blockchain/btc     – import from Bitcoin address
-GET  /api/gains                     – realised capital gains
-GET  /api/income                    – income transactions
-GET  /api/summary                   – aggregate stats (year filter optional)
+GET  /api/config                        – get system config
+PUT  /api/config                        – update config
+GET  /api/fx/rates                      – current FX rates relative to base currency
+POST /api/fx/rates/manual               – set a manual rate override
+GET  /api/portfolio                     – current crypto holdings
+GET  /api/fiat-accounts                 – fiat currency account balances
+GET  /api/fiat-accounts/{currency}      – single currency balance + ledger
+GET  /api/transactions                  – list all transactions (filterable)
+POST /api/transactions                  – add a transaction
+DELETE /api/transactions/{id}           – remove a transaction
+POST /api/import/csv                    – upload + auto-detect exchange CSV
+POST /api/import/coinbase               – Coinbase CSV
+POST /api/import/binance                – Binance CSV
+POST /api/import/kraken                 – Kraken CSV
+POST /api/import/crypto-com             – Crypto.com CSV
+POST /api/import/blockchain/tron        – import from Tron address
+POST /api/import/blockchain/eth         – import from Ethereum address
+POST /api/import/blockchain/btc         – import from Bitcoin address
+GET  /api/gains                         – realised capital gains
+GET  /api/income                        – income transactions
+GET  /api/summary                       – aggregate stats (year filter optional)
 """
 
 from __future__ import annotations
@@ -43,7 +46,9 @@ from ..engine.portfolio import Portfolio
 from ..engine.fiat_converter import FiatConverter
 from ..engine.wallet_importer import WalletImporter
 from ..engine.blockchain_importer import BlockchainImporter
+from ..engine.fiat_account import FiatAccountTracker
 from ..models.transaction import Transaction, TransactionType
+from ..config import FIAT_SYMBOLS
 
 log = logging.getLogger(__name__)
 
@@ -243,6 +248,73 @@ def create_app() -> FastAPI:
         }
 
     # ---------------------------------------------------------------- #
+    # Fiat Accounts
+    # ---------------------------------------------------------------- #
+
+    @app.get("/api/fiat-accounts")
+    async def get_fiat_accounts():
+        """Return aggregate fiat balances per currency."""
+        store = _get_store()
+        tracker = FiatAccountTracker.from_store(store)
+        accounts = tracker.accounts(include_zero=True)
+        converter: FiatConverter = _state["converter"]
+        cfg = _get_config()
+        converter.ensure_loaded()
+
+        result = []
+        for acc in accounts:
+            item = acc.to_dict()
+            item["symbol"] = FIAT_SYMBOLS.get(acc.currency, acc.currency)
+            # Convert balance to base currency if different
+            if cfg.base_currency != acc.currency:
+                try:
+                    rate = converter.get_rate(acc.currency, cfg.base_currency)
+                    item["balance_base"] = str(
+                        (acc.balance * rate).quantize(Decimal("0.01"))
+                    )
+                    item["base_currency"] = cfg.base_currency
+                except Exception:
+                    pass
+            result.append(item)
+
+        # Total balance converted to base currency
+        total_base = Decimal("0")
+        for acc in accounts:
+            try:
+                rate = converter.get_rate(acc.currency, cfg.base_currency)
+                total_base += acc.balance * rate
+            except Exception:
+                pass
+
+        return {
+            "accounts": result,
+            "total_balance_base": str(total_base.quantize(Decimal("0.01"))),
+            "base_currency": cfg.base_currency,
+            "base_symbol": FIAT_SYMBOLS.get(cfg.base_currency, cfg.base_currency),
+        }
+
+    @app.get("/api/fiat-accounts/{currency}")
+    async def get_fiat_account(
+        currency: str,
+        wallet: Optional[str] = None,
+        limit: int = Query(200, le=2000),
+    ):
+        """Return balance and full ledger for a single fiat currency."""
+        store = _get_store()
+        tracker = FiatAccountTracker.from_store(store)
+        currency = currency.upper()
+        account = tracker.account(currency)
+        if not account:
+            raise HTTPException(404, f"No fiat account found for {currency}")
+
+        entries = tracker.ledger(currency, wallet)
+        return {
+            "account": account.to_dict(),
+            "ledger": [e.to_dict() for e in entries[-limit:]],
+            "symbol": FIAT_SYMBOLS.get(currency, currency),
+        }
+
+    # ---------------------------------------------------------------- #
     # Transactions
     # ---------------------------------------------------------------- #
 
@@ -289,6 +361,9 @@ def create_app() -> FastAPI:
         fee_usd: Optional[str] = None
         fee_asset: Optional[str] = None
         fee_quantity: Optional[str] = None
+        fiat_currency: Optional[str] = None
+        fiat_amount: Optional[str] = None
+        fx_rate_to_usd: Optional[str] = None
         swap_asset: Optional[str] = None
         swap_quantity: Optional[str] = None
         wallet: Optional[str] = None
